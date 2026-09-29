@@ -274,3 +274,14 @@ mark.find{background:var(--hl-y);color:var(--hl-ink);outline:2px solid var(--sup
 .bk i{font-style:italic}
 
 .bk h5{font-family:var(--sans);font-size:.95em;font-weight:700;margin:16px 0 6px}
+
+/* 펜 색 도크 (패드·폰) */
+.pendock{position:fixed;right:12px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:45;display:flex;align-items:center;gap:6px;background:#1b1f1d;color:#fff;border-radius:99px;padding:6px 8px 6px 12px;box-shadow:0 6px 20px rgba(0,0,0,.3);font-size:12px}
+.pendock .pd-label{opacity:.7;margin-right:2px}
+.pendock .sw{width:26px;height:26px;border-radius:50%;border:2px solid rgba(255,255,255,.35);padding:0}
+.pendock .sw.y{background:#ffec8a}.pendock .sw.g{background:#bfe8c9}.pendock .sw.p{background:#ffc9d9}.pendock .sw.b{background:#c4dcff}
+.pendock .sw.u{background:transparent;color:#ff8a8a;font-weight:700;text-decoration:underline;font-size:12px}
+.pendock .sw.on{border-color:#fff;box-shadow:0 0 0 2px #1b1f1d,0 0 0 4px #fff}
+#pd-finger{color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:99px;padding:3px 10px;font-size:12px}
+#pd-finger[aria-pressed="true"]{background:#fff;color:#1b1f1d}
+@media (max-width:759px){.pendock{bottom:calc(var(--tab-h) + 12px + env(safe-area-inset-bottom,0px))}}

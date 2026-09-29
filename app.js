@@ -267,6 +267,58 @@ document.addEventListener('mouseup', e => { if (lastPointer === 'mouse' && !bar.
 let selT; document.addEventListener('selectionchange', () => { if (lastPointer === 'mouse') return; clearTimeout(selT); selT = setTimeout(checkSelection, 450); });
 $('#reader').addEventListener('scroll', () => { if (!bar.hidden && !bar.contains(document.activeElement)) bar.hidden = true; }, { passive: true });
 
+/* ---------------- 펜으로 바로 긋기 (Apple Pencil·S펜) ----------------
+ * 펜으로 글자 위를 그으면 고른 색으로 바로 칠해집니다. 손가락은 평소처럼 화면을 넘깁니다.
+ * '손가락' 버튼을 켜면 손가락으로도 칠할 수 있습니다(그동안은 화면 넘기기가 멈춤). */
+const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let penColor = 'y', fingerDraw = false, drawing = null;
+function caretAt(x, y) {
+  if (document.caretRangeFromPoint) { const r = document.caretRangeFromPoint(x, y); return r && { node: r.startContainer, off: r.startOffset }; }
+  if (document.caretPositionFromPoint) { const p = document.caretPositionFromPoint(x, y); return p && { node: p.offsetNode, off: p.offset }; }
+  return null;
+}
+const inText = n => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return el && el.closest('#reader .tx'); };
+function drawStart(x, y) { const c = caretAt(x, y); if (!c || !inText(c.node)) return false; drawing = { a: c, moved: false }; bar.hidden = true; return true; }
+function drawMove(x, y) {
+  if (!drawing) return; const c = caretAt(x, y); if (!c || !$('#reader').contains(c.node)) return;
+  const r = document.createRange();
+  try { r.setStart(drawing.a.node, drawing.a.off); r.setEnd(c.node, c.off); if (r.collapsed) { r.setStart(c.node, c.off); r.setEnd(drawing.a.node, drawing.a.off); } } catch (e) { return; }
+  drawing.moved = !r.collapsed; const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+}
+function drawEnd() {
+  if (!drawing) return; const d = drawing; drawing = null; if (!d.moved) return;
+  const r = segmentsFromSelection(); if (!r) { getSelection().removeAllRanges(); return; }
+  selSegs = r.segs; addMark(penColor);
+}
+const skipTarget = t => t.closest('textarea, input, button, a, mark.hl, .unit-extra');
+const reader = $('#reader');
+if (IOS) {
+  reader.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1 || skipTarget(e.target)) return; const t = e.touches[0];
+    if (t.touchType !== 'stylus' && !fingerDraw) return;
+    if (drawStart(t.clientX, t.clientY)) e.preventDefault();
+  }, { passive: false });
+  reader.addEventListener('touchmove', e => { if (!drawing) return; e.preventDefault(); const t = e.touches[0]; drawMove(t.clientX, t.clientY); }, { passive: false });
+  reader.addEventListener('touchend', drawEnd); reader.addEventListener('touchcancel', () => { drawing = null; });
+} else {
+  const want = e => e.pointerType === 'pen' || (e.pointerType === 'touch' && fingerDraw);
+  reader.addEventListener('pointerover', e => { if (e.pointerType === 'pen') reader.style.touchAction = 'none'; });
+  reader.addEventListener('pointerleave', e => { if (e.pointerType === 'pen' && !fingerDraw) reader.style.touchAction = ''; });
+  reader.addEventListener('pointerdown', e => { if (!want(e) || skipTarget(e.target)) return; if (drawStart(e.clientX, e.clientY)) { e.preventDefault(); try { reader.setPointerCapture(e.pointerId); } catch (_) {} } });
+  reader.addEventListener('pointermove', e => { if (drawing && want(e)) drawMove(e.clientX, e.clientY); });
+  reader.addEventListener('pointerup', e => { if (drawing) drawEnd(); });
+  reader.addEventListener('pointercancel', () => { drawing = null; });
+}
+function setPenColor(c) { penColor = c; $$('#pendock [data-pc]').forEach(b => b.classList.toggle('on', b.dataset.pc === c)); Store.setPref('pen', c); }
+function setFinger(on) {
+  fingerDraw = on; $('#pd-finger').setAttribute('aria-pressed', on); document.body.classList.toggle('finger-draw', on);
+  if (!IOS) reader.style.touchAction = on ? 'none' : '';
+  toast(on ? '손가락으로 칠하기 켜짐 · 화면을 넘기려면 끄세요' : '손가락으로 칠하기 꺼짐');
+}
+$('#pendock').addEventListener('click', e => { const b = e.target.closest('[data-pc]'); if (b) setPenColor(b.dataset.pc); if (e.target.closest('#pd-finger')) setFinger(!fingerDraw); });
+if (matchMedia('(any-pointer: coarse)').matches || IOS) $('#pendock').hidden = false;
+addEventListener('pointerdown', e => { if (e.pointerType === 'pen') $('#pendock').hidden = false; }, { passive: true });
+
 function addMark(c, note) {
   if (!selSegs) return; const gid = uidGen('m'); const at = Date.now();
   Store.addMarks(selSegs.map((s, i) => ({ id: gid + '-' + i, gid, lid: st.lid, block: s.block, s: s.s, e: s.e, c, note: i === 0 ? (note || '') : '', quote: s.quote, at })));
@@ -555,6 +607,20 @@ drop.addEventListener('drop', async e => {
   addUplFiles(files);
 });
 
+
+/* 다른 기기에서 쓴 내용: 앱으로 돌아올 때마다(20초 간격) 다시 불러옴 */
+let lastSync = Date.now();
+async function syncNow(force) {
+  if (!cur() || (!force && Date.now() - lastSync < 20000)) return; lastSync = Date.now();
+  try {
+    await Store.load(); await Store.loadAtts(st.lid);
+    applyMarks(); renderNotes(); refreshAtts(); renderToc();
+    $$('#reader textarea.ans').forEach(ta => { if (document.activeElement !== ta) { const a = Store.answers()[ta.dataset.for]; ta.value = a ? a.t : ''; } });
+  } catch (e) { console.error(e); }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
+addEventListener('focus', () => syncNow());
+
 /* ---------------- 시작: 로그인 → 권한 확인 → 교재 ---------------- */
 const firstReady = () => { const x = st.index.lessons.find(l => l.ready && l.no >= 1) || st.index.lessons.find(l => l.ready); return x ? x.id : null; };
 function gate(state, info = {}) {
@@ -577,7 +643,7 @@ $('#btn-copy-uid').addEventListener('click', () => {
 async function enterApp(info) {
   gate('loading');
   await Store.load();
-  setFs(Store.pref('fs', 17));
+  setFs(Store.pref('fs', 17)); setPenColor(Store.pref('pen', 'y'));
   $('#acct-name').textContent = info.name + (info.role === 'admin' ? ' · 관리자' : info.role === 'teacher' ? ' · 강사' : '');
   $('#btn-admin').hidden = !(info.role === 'admin' && B.kind === 'firebase');
   $('#btn-logout').hidden = B.kind !== 'firebase';
