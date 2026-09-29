@@ -1,7 +1,7 @@
 /* 제자의 삶 — 설치·오프라인용 서비스워커
  * 앱 화면 파일은 "인터넷 먼저, 안 되면 저장본" 방식이라 GitHub에 새 파일을 올리면 바로 반영됩니다.
  * 교재 본문·원본 사진·내 표시는 Firestore가 기기에 따로 보관합니다(오프라인 열람). */
-const CACHE = 'jesam-v0.5';
+const CACHE = 'jesam-v0.6';
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'backend.js', 'firebase-config.js', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'favicon-32.png'];
 

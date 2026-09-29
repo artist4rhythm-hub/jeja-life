@@ -90,6 +90,19 @@
   <button type="button" id="pd-finger" aria-pressed="false">손가락</button>
 </div>
 
+<div id="notepop" class="notepop" role="dialog" aria-label="메모" hidden>
+  <div class="np-quote"></div>
+  <p class="np-text"></p>
+  <textarea id="np-in" rows="4" placeholder="메모를 적어 주세요" hidden></textarea>
+  <div class="np-act">
+    <button type="button" id="np-del" class="np-del">표시 지우기</button>
+    <span class="grow"></span>
+    <button type="button" id="np-close" class="ghost">닫기</button>
+    <button type="button" id="np-edit" class="primary">메모 쓰기</button>
+    <button type="button" id="np-save" class="primary" hidden>저장</button>
+  </div>
+</div>
+
 <div id="hlbar" role="toolbar" aria-label="형광펜 도구" hidden>
   <span class="hl-main">
     <button type="button" class="sw y" data-c="y" aria-label="노랑 형광펜"></button>

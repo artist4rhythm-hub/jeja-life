@@ -263,7 +263,7 @@ function checkSelection() {
   selSegs = r.segs; editGid = null; showBar(r.rect, 'main');
 }
 document.addEventListener('pointerdown', e => { lastPointer = e.pointerType || 'mouse'; if (!bar.contains(e.target) && !e.target.closest('mark.hl')) bar.hidden = true; });
-document.addEventListener('mouseup', e => { if (lastPointer === 'mouse' && !bar.contains(e.target)) setTimeout(checkSelection, 10); });
+document.addEventListener('mouseup', e => { if (lastPointer === 'mouse' && !bar.contains(e.target) && !(e.detail >= 2 && e.target.closest('mark.hl'))) setTimeout(checkSelection, 10); });
 let selT; document.addEventListener('selectionchange', () => { if (lastPointer === 'mouse') return; clearTimeout(selT); selT = setTimeout(checkSelection, 450); });
 $('#reader').addEventListener('scroll', () => { if (!bar.hidden && !bar.contains(document.activeElement)) bar.hidden = true; }, { passive: true });
 
@@ -334,10 +334,58 @@ function saveMemo() {
 }
 $('#hl-memo-ok').addEventListener('click', saveMemo);
 $('#hl-memo-in').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); saveMemo(); } if (e.key === 'Escape') hideBar(); });
-$('#reader').addEventListener('click', e => {
-  const m = e.target.closest('mark.hl'); if (!m || !getSelection().isCollapsed) return;
-  editGid = m.dataset.gid; selSegs = null; showBar(m.getBoundingClientRect(), 'edit');
+/* ---------------- 칠한 곳 메모: 한 번 누르면 보기, 두 번 누르면 바로 쓰기 ---------------- */
+const pop = $('#notepop');
+let popGid = null, lastTap = { gid: null, t: 0 }, tapT = null;
+const COLOR_NAME = { y: '노랑', g: '초록', p: '분홍', b: '파랑', u: '밑줄' };
+function openNote(gid, rect, edit) {
+  const segs = Store.marks().filter(m => m.gid === gid); if (!segs.length) return;
+  popGid = gid; hideBar();
+  const quote = segs.map(x => x.quote).join(' … '), note = segs[0].note || '';
+  const q = $('.np-quote', pop); q.textContent = quote.length > 90 ? quote.slice(0, 90) + '…' : quote; q.className = 'np-quote c-' + segs[0].c;
+  $('.np-text', pop).textContent = note || '아직 메모가 없습니다. 두 번 누르거나 [메모 쓰기]를 누르세요.';
+  $('.np-text', pop).classList.toggle('empty', !note);
+  $('#np-in').value = note;
+  setPopMode(edit);
+  pop.hidden = false;
+  const w = pop.offsetWidth, h = pop.offsetHeight, vw = document.documentElement.clientWidth, vh = innerHeight;
+  const x = Math.min(Math.max(10, rect.left + rect.width / 2 - w / 2), vw - w - 10);
+  let y = rect.bottom + 10; if (y + h > vh - 10 && rect.top - h - 10 > 10) y = rect.top - h - 10;
+  pop.style.left = (x + scrollX) + 'px'; pop.style.top = (y + scrollY) + 'px';
+  if (edit) setTimeout(() => { const t = $('#np-in'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); }, 30);
+}
+function setPopMode(edit) {
+  pop.classList.toggle('editing', edit);
+  $('#np-in').hidden = !edit; $('.np-text', pop).hidden = edit;
+  $('#np-edit').hidden = edit; $('#np-save').hidden = !edit;
+  const has = !!(Store.marks().find(m => m.gid === popGid) || {}).note;
+  $('#np-edit').textContent = has ? '메모 수정' : '메모 쓰기';
+}
+function closeNote() { pop.hidden = true; popGid = null; }
+$('#np-edit').addEventListener('click', () => { setPopMode(true); $('#np-in').focus(); });
+$('#np-save').addEventListener('click', () => {
+  if (!popGid) return; const v = $('#np-in').value.trim(); Store.setNote(popGid, v);
+  closeNote(); applyMarks(); renderNotes(); toast(v ? '메모를 저장했습니다' : '메모를 비웠습니다');
 });
+$('#np-del').addEventListener('click', () => { if (!popGid) return; Store.removeGroup(popGid); closeNote(); applyMarks(); renderNotes(); toast('표시를 지웠습니다'); });
+$('#np-close').addEventListener('click', closeNote);
+$('#np-in').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('#np-save').click(); } if (e.key === 'Escape') closeNote(); });
+// 칠한 곳을 두 번 클릭할 때 단어가 선택되지 않게
+$('#reader').addEventListener('mousedown', e => { if (e.detail >= 2 && e.target.closest('mark.hl')) e.preventDefault(); });
+$('#reader').addEventListener('click', e => {
+  const m = e.target.closest('mark.hl'); if (!m) return;
+  const gid = m.dataset.gid, now = Date.now();
+  if (lastTap.gid === gid && now - lastTap.t < 380) {           // 두 번 누름 → 바로 쓰기
+    clearTimeout(tapT); lastTap = { gid: null, t: 0 }; getSelection().removeAllRanges();
+    openNote(gid, m.getBoundingClientRect(), true); return;
+  }
+  if (!getSelection().isCollapsed) return;
+  lastTap = { gid, t: now }; const rect = m.getBoundingClientRect();
+  clearTimeout(tapT); tapT = setTimeout(() => openNote(gid, rect, false), 260);   // 한 번 누름 → 보기
+});
+document.addEventListener('pointerdown', e => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('mark.hl')) closeNote(); });
+$('#reader').addEventListener('scroll', () => { if (!pop.hidden && !pop.classList.contains('editing')) closeNote(); }, { passive: true });
+addEventListener('scroll', () => { if (!pop.hidden && !pop.classList.contains('editing')) closeNote(); }, { passive: true });
 $('#hl-del').addEventListener('click', () => { if (!editGid) return; Store.removeGroup(editGid); hideBar(); applyMarks(); renderNotes(); toast('표시를 지웠습니다'); });
 $('#hl-note-edit').addEventListener('click', () => {
   const g = editGid; const first = Store.marks().find(m => m.gid === g); const r = bar.getBoundingClientRect();
@@ -364,6 +412,7 @@ function applyMarks() {
     const tx = $(`[data-id="${m.block}"] .tx`, r); if (!tx) return;
     wrapOffsets(tx, m.s, m.e, `hl c-${m.c}${notes[m.gid] ? ' has-note' : ''}`, m.gid, notes[m.gid]);
   });
+  Object.keys(notes).forEach(g => { const ms = $$(`mark.hl[data-gid="${g}"]`, r); if (ms.length) ms[ms.length - 1].classList.add('note-end'); });
 }
 
 /* ---------------- 내 노트 ---------------- */
@@ -526,7 +575,7 @@ $('#tabbar').addEventListener('click', e => {
 });
 $$('[data-close]').forEach(b => b.addEventListener('click', closeSheets));
 $('#btn-panel').addEventListener('click', () => document.body.classList.contains('show-panel') ? closeSheets() : openPanel());
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideBar(); $('#modal').hidden = true; $('#lightbox').hidden = true; } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideBar(); closeNote(); $('#modal').hidden = true; $('#lightbox').hidden = true; } });
 
 /* 글자 크기 */
 const FS = [15, 16, 17, 18, 20, 22];
