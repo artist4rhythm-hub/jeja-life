@@ -1,0 +1,17 @@
+{
+  "name": "제자의 삶",
+  "short_name": "제삶",
+  "description": "제자의 삶 디지털 교재 — 읽고, 칠하고, 적고, 덧붙이는 교재",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1f5a3d",
+  "theme_color": "#1f5a3d",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -107,6 +107,7 @@ function blockHTML(b, prev) {
     }
     case 'h3': return `<h3 class="blk" ${A}>${pg}${tx(b.text)}</h3>`;
     case 'h4': return `<h4 class="blk" ${A}>${pg}${tx(b.text)}</h4>`;
+    case 'h5': return `<h5 class="blk" ${A}>${pg}${tx(b.text)}</h5>`;
     case 'lead': return `<p class="blk lead" ${A}>${pg}${tx(b.text)}</p>`;
     case 'li': return `<p class="blk li" ${A}>${pg}${tx(b.text)}</p>`;
     case 'verse': return `<p class="blk verse" ${A}>${pg}${b.ref ? `<span class="ref">[${esc(b.ref)}]</span>` : ''}${tx(b.text)}</p>`;
@@ -596,6 +597,7 @@ async function enterApp(info) {
 }
 
 (async function start() {
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
   gate('loading');
   B = await createBackend();
   let entered = false;

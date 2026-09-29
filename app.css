@@ -272,3 +272,5 @@ mark.find{background:var(--hl-y);color:var(--hl-ink);outline:2px solid var(--sup
 
 .bk h1.day{font-family:var(--serif);font-weight:900;font-size:1.45em;text-align:center;margin:10px 0 18px;line-height:1.35;text-wrap:balance}
 .bk i{font-style:italic}
+
+.bk h5{font-family:var(--sans);font-size:.95em;font-weight:700;margin:16px 0 6px}
