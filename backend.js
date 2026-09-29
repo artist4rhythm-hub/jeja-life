@@ -70,6 +70,22 @@ async function FirebaseBackend(config) {
     setDone: (id, v) => v ? F.setDoc(d('users', u(), 'done', id), { at: Date.now() }) : F.deleteDoc(d('users', u(), 'done', id)),
     setPrefs: p => F.setDoc(d('users', u(), 'prefs', 'main'), p),
 
+    // 실시간: 내 형광펜·메모·답·진도가 다른 기기에서 바뀌면 바로 알려줌
+    watchUser(cb) {
+      const uid = u(); const offs = [];
+      offs.push(F.onSnapshot(F.collection(db, 'users', uid, 'marks'), snap => {
+        const marks = []; snap.forEach(x => { const g = x.data(); (g.segs || []).forEach((s, i) => marks.push({ id: x.id + '-' + i, gid: x.id, lid: g.lid, block: s.block, s: s.s, e: s.e, quote: s.quote, c: g.c, note: i === 0 ? (g.note || '') : '', at: g.at })); });
+        cb({ marks });
+      }, e => console.error('marks', e)));
+      offs.push(F.onSnapshot(F.collection(db, 'users', uid, 'answers'), snap => { const answers = {}; snap.forEach(x => { answers[x.id] = x.data(); }); cb({ answers }); }, e => console.error('answers', e)));
+      offs.push(F.onSnapshot(F.collection(db, 'users', uid, 'done'), snap => { const done = {}; snap.forEach(x => { done[x.id] = x.data().at; }); cb({ done }); }, e => console.error('done', e)));
+      return () => offs.forEach(f => f());
+    },
+    watchAtts(lid, cb) {
+      return F.onSnapshot(F.collection(db, 'lessons', lid, 'attachments'), snap => {
+        const out = []; snap.forEach(x => out.push({ ...x.data(), id: x.id, lid })); cb(out.sort((a, b) => a.at - b.at));
+      }, e => console.error('atts', e));
+    },
     async listAtts(lid) {
       const s = await F.getDocs(F.collection(db, 'lessons', lid, 'attachments'));
       const out = []; s.forEach(x => out.push({ ...x.data(), id: x.id, lid })); return out.sort((a, b) => a.at - b.at);
@@ -107,6 +123,8 @@ function LocalBackend() {
     setAnswer: (id, t) => { if (t) db.answers[id] = { t, at: Date.now() }; else delete db.answers[id]; return save(); },
     setDone: (id, v) => { if (v) db.done[id] = Date.now(); else delete db.done[id]; return save(); },
     setPrefs: p => { db.prefs = p; return save(); },
+    watchUser: () => () => {},
+    watchAtts: () => () => {},
     listAtts: async lid => Object.values(db.atts).filter(a => a.lid === lid).sort((a, b) => a.at - b.at),
     addAtt: a => { db.atts[a.id] = { ...a, author: 'local' }; return save(); },
     removeAtt: a => { delete db.atts[a.id]; return save(); },

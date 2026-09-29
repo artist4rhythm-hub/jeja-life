@@ -31,6 +31,8 @@ const Store = (() => {
     setDone(uid, v) { if (v) mem.done[uid] = Date.now(); else delete mem.done[uid]; B.setDone(uid, v).catch(fail); },
     atts: () => Object.values(mem.atts).flat(),
     hasAtts: lid => lid in mem.atts,
+    setRemote(part) { Object.assign(mem, part); },
+    setRemoteAtts(lid, list) { mem.atts[lid] = list; },
     async loadAtts(lid) { try { mem.atts[lid] = await B.listAtts(lid); } catch (e) { console.error(e); mem.atts[lid] = []; } },
     async addAtt(a) { await B.addAtt(a); (mem.atts[a.lid] = mem.atts[a.lid] || []).push(a); },
     async removeAtt(id) {
@@ -177,6 +179,7 @@ const short = t => { const s = plain(t).replace(/[.?!]$/, ''); return s.length >
 async function openLesson(lid, ui = 0, blockId = null, q = null) {
   const L = await loadLesson(lid);
   if (!Store.hasAtts(lid)) await Store.loadAtts(lid);
+  watchLessonAtts(lid);
   const changed = st.lid !== lid; st.lid = lid;
   if (blockId) ui = Math.max(0, L.body.indexOf(L.units[L.blockUnit[blockId]]));
   st.ui = Math.min(Math.max(ui, 0), L.body.length - 1);
@@ -657,6 +660,36 @@ drop.addEventListener('drop', async e => {
 });
 
 
+
+/* ---------------- 실시간 동기화 ----------------
+ * 다른 기기(또는 다른 창)에서 칠하거나 메모·답·자료를 바꾸면 1~2초 안에 이 화면에도 반영됩니다.
+ * 지금 글자를 고르거나 메모를 쓰는 중이면 끝날 때까지 잠깐 미뤘다가 반영합니다. */
+let liveT = null, pendingParts = {}, unwatchAtts = null, attsFor = null;
+function busyEditing() {
+  const ae = document.activeElement;
+  return drawing || !bar.hidden || (!pop.hidden && pop.classList.contains('editing')) || !getSelection().isCollapsed;
+}
+function flushLive() {
+  clearTimeout(liveT);
+  if (busyEditing()) { liveT = setTimeout(flushLive, 1200); return; }
+  const parts = pendingParts; pendingParts = {};
+  if (parts.marks || parts.answers || parts.done) {
+    if (parts.marks) applyMarks();
+    renderNotes(); renderToc();
+    if (parts.answers) $$('#reader textarea.ans').forEach(ta => { if (document.activeElement !== ta) { const a = Store.answers()[ta.dataset.for]; ta.value = a ? a.t : ''; } });
+    if (parts.done && isMob()) $$('.chips [data-unit]').forEach(c => { const u = cur() && cur().body[+c.dataset.unit]; if (u) c.classList.toggle('done', !!Store.done()[u.id]); });
+  }
+  if (parts.atts) refreshAtts();
+}
+function onLive(part) {
+  Store.setRemote(part); Object.keys(part).forEach(k => pendingParts[k] = 1);
+  clearTimeout(liveT); liveT = setTimeout(flushLive, 150);
+}
+function watchLessonAtts(lid) {
+  if (attsFor === lid) return; if (unwatchAtts) unwatchAtts(); attsFor = lid;
+  unwatchAtts = B.watchAtts(lid, list => { Store.setRemoteAtts(lid, list); if (lid === st.lid) { pendingParts.atts = 1; clearTimeout(liveT); liveT = setTimeout(flushLive, 150); } });
+}
+
 /* 다른 기기에서 쓴 내용: 앱으로 돌아올 때마다(20초 간격) 다시 불러옴 */
 let lastSync = Date.now();
 async function syncNow(force) {
@@ -692,6 +725,7 @@ $('#btn-copy-uid').addEventListener('click', () => {
 async function enterApp(info) {
   gate('loading');
   await Store.load();
+  B.watchUser(onLive);
   setFs(Store.pref('fs', 17)); setPenColor(Store.pref('pen', 'y'));
   $('#acct-name').textContent = info.name + (info.role === 'admin' ? ' · 관리자' : info.role === 'teacher' ? ' · 강사' : '');
   $('#btn-admin').hidden = !(info.role === 'admin' && B.kind === 'firebase');
