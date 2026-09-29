@@ -269,3 +269,6 @@ mark.find{background:var(--hl-y);color:var(--hl-ink);outline:2px solid var(--sup
 .upl-list small{color:var(--muted)}
 .upl-list b{font-weight:500;color:var(--muted);white-space:nowrap}
 .upl-list b.ok{color:var(--brand)}.upl-list b.bad{color:var(--ul)}
+
+.bk h1.day{font-family:var(--serif);font-weight:900;font-size:1.45em;text-align:center;margin:10px 0 18px;line-height:1.35;text-wrap:balance}
+.bk i{font-style:italic}

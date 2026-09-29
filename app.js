@@ -46,8 +46,8 @@ const Store = (() => {
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-const plain = s => String(s || '').replace(/\*\*/g, '');
+const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<i>$2</i>');
+const plain = s => String(s || '').replace(/\*\*/g, '').replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1$2');
 const uidGen = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const mq = matchMedia('(max-width:759px)');
 const isMob = () => mq.matches;
@@ -98,7 +98,7 @@ function blockHTML(b, prev) {
   const A = `data-id="${b.id}" data-page="${b.page}"`;
   const tx = t => `<span class="tx">${inline(t)}</span>`;
   switch (b.t) {
-    case 'h1': return '';
+    case 'h1': return `<h1 class="blk day" ${A}>${pg}${tx(b.text)}</h1>`;
     case 'h2': {
       let t = b.text, pre = '';
       const m = t.match(/^(\d+)\s+(.*)$/); const c = t.match(/^([✓✝†])\s*(.*)$/);
