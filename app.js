@@ -5,6 +5,7 @@
 import { createBackend } from './backend.js';
 import { editImage } from './imgedit.js';
 import { initBible, openRef as bibleOpen, linkRefs, loadBooks } from './bible.js';
+import { initTTS } from './tts.js';
 let B = null;
 (() => {
 'use strict';
@@ -37,6 +38,10 @@ const Store = (() => {
     setRemoteAtts(lid, list) { mem.atts[lid] = list; },
     async loadAtts(lid) { try { mem.atts[lid] = await B.listAtts(lid); } catch (e) { console.error(e); mem.atts[lid] = []; } },
     async addAtt(a) { await B.addAtt(a); (mem.atts[a.lid] = mem.atts[a.lid] || []).push(a); },
+    async updateAtt(id, patch) {
+      const a = this.atts().find(x => x.id === id); if (!a) return;
+      await B.updateAtt(a, patch); Object.assign(a, patch);
+    },
     async removeAtt(id) {
       const a = this.atts().find(x => x.id === id); if (!a) return;
       await B.removeAtt(a); mem.atts[a.lid] = mem.atts[a.lid].filter(x => x.id !== id);
@@ -59,6 +64,7 @@ const pageLabel = p => /^i\d/.test(p) ? `안내 ${p.slice(1)}쪽` : `${p}쪽`;
 const lessonNo = L => (L.no >= 1 && L.no <= 12) ? String(L.no) : '';
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 1800); }
 
+let tts = null;
 const st = { index: null, lessons: {}, lid: null, ui: 0, pg: null, scope: 'all', visibleUnit: null };
 
 /* ---------------- 데이터 ---------------- */
@@ -147,13 +153,32 @@ function heroHTML(L) {
 }
 function extraHTML(u) {
   const list = Store.atts().filter(a => a.uid === u.id);
-  return `<div class="unit-extra" data-uid="${u.id}"><div class="ue-h">추가 자료 ${list.length ? list.length : ''}<button type="button" class="add" data-add="${u.id}">+ 자료 추가</button></div>${list.map(attHTML).join('')}</div>`;
+  return `<div class="unit-extra ${list.length ? '' : 'empty'}" data-uid="${u.id}"><div class="ue-h">추가 자료 ${list.length ? list.length : ''}<button type="button" class="add" data-add="${u.id}">+ 자료 추가</button></div>${list.map(attHTML).join('')}</div>`;
+}
+/* 자료 공개 범위: private = 올린 사람만 / teachers = 강사들 공개 / all = 전체 공개(훈련생 포함, 관리자만 선택) */
+const VIS = { private: ['🔒', '나만 보기'], teachers: ['👥', '강사 공개'], all: ['🌐', '전체 공개'] };
+const myUid = () => st.me && st.me.uid;
+const isAdmin = () => st.me && st.me.role === 'admin';
+const canEditAtt = a => isAdmin() || (a.author && a.author === myUid());
+function visHTML(a) {
+  const v = VIS[a.vis] ? a.vis : 'all';
+  const who = a.author && a.author !== myUid() && a.authorName ? `<span class="att-by">${esc(a.authorName)}</span>` : '';
+  if (!canEditAtt(a)) return `<span class="vis v-${v}" title="${VIS[v][1]}">${VIS[v][0]} ${VIS[v][1]}</span>${who}`;
+  const opts = Object.entries(VIS).filter(([k]) => k !== 'all' || isAdmin() || v === 'all')
+    .map(([k, [ic, t]]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${ic} ${t}</option>`).join('');
+  return `<select class="vis-sel v-${v}" data-vis-att="${a.id}" aria-label="공개 범위">${opts}</select>${who}`;
 }
 function attHTML(a) {
-  const del = `<button type="button" class="del" data-del-att="${a.id}">삭제</button>`;
-  if (a.kind === 'link') return `<div class="supp"><div class="st">🔗 ${esc(a.title)}${del}</div><p><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.url)}</a></p></div>`;
-  if (a.kind === 'image') return `<div class="supp"><div class="st">🖼 ${esc(a.title)}${del}</div><img src="${esc(a.img || '')}" alt="${esc(a.title)}"></div>`;
-  return `<div class="supp"><div class="st">📝 ${esc(a.title)}${del}</div><p>${esc(a.text || '')}</p></div>`;
+  const del = canEditAtt(a) ? `<button type="button" class="del" data-del-att="${a.id}">삭제</button>` : '';
+  const meta = `<div class="att-meta">${visHTML(a)}${del}</div>`;
+  if (a.kind === 'link') return `<div class="supp"><div class="st">🔗 ${esc(a.title)}</div>${meta}<p><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.url)}</a></p></div>`;
+  if (a.kind === 'image') return `<div class="supp"><div class="st">🖼 ${esc(a.title)}</div>${meta}<img src="${esc(a.img || '')}" alt="${esc(a.title)}"></div>`;
+  return `<div class="supp"><div class="st">📝 ${esc(a.title)}</div>${meta}<p>${esc(a.text || '')}</p></div>`;
+}
+async function changeVis(sel) {
+  const id = sel.dataset.visAtt, v = sel.value;
+  try { await Store.updateAtt(id, { vis: v }); refreshAtts(); toast(`공개 범위를 ${VIS[v][0]} ${VIS[v][1]}로 바꿨습니다`); }
+  catch (e) { toast('바꾸지 못했습니다: ' + (e.code || e.message)); refreshAtts(); }
 }
 function hydrateImages() {}
 
@@ -172,6 +197,7 @@ function renderReader() {
     html = `<div class="page-wrap bk">${heroHTML(L)}${L.body.map(unitHTML).join('')}</div>`;
   }
   r.innerHTML = html;
+  if (tts) tts.rerendered();
   $('#top-lesson').textContent = (lessonNo(L) ? L.no + '과 ' : '') + L.title;
   applyMarks(); hydrateImages(r); observeBlocks();
   const chip = $('.chips .on', r); if (chip) chip.scrollIntoView({ inline: 'center', block: 'nearest' });
@@ -479,10 +505,14 @@ $('#notes').addEventListener('click', e => { const b = e.target.closest('[data-j
 function renderFiles() {
   const L = cur(); if (!L) return; const f = $('#files');
   const list = Store.atts().filter(a => a.lid === L.id);
-  f.innerHTML = `<p class="empty">과·단원마다 보충 설명, 링크(영상·찬양), 사진을 붙일 수 있습니다. 붙인 자료는 본문 해당 단원 끝에도 표시됩니다.</p>` +
+  const intro = st.me && st.me.role === 'member' ? (list.length ? '' : '<p class="empty">아직 공개된 자료가 없습니다.</p>')
+    : `<p class="empty">과·단원마다 보충 설명, 링크(영상·찬양), 사진을 붙일 수 있습니다. 올린 자료는 기본으로 <b>🔒 나만 보기</b>이고, 자료마다 <b>👥 강사 공개</b>로 바꿀 수 있습니다.</p>`;
+  f.innerHTML = intro +
     L.body.map(u => { const ul = list.filter(a => a.uid === u.id); return `<div class="ngroup">${esc(u.title)}</div>${ul.map(attHTML).join('')}<button type="button" class="note" data-add="${u.id}" style="color:var(--brand)">+ 이 단원에 자료 추가</button>`; }).join('');
   hydrateImages(f);
 }
+$('#files').addEventListener('change', e => { const s = e.target.closest('[data-vis-att]'); if (s) changeVis(s); });
+$('#reader').addEventListener('change', e => { const s = e.target.closest('[data-vis-att]'); if (s) changeVis(s); });
 $('#files').addEventListener('click', e => {
   const a = e.target.closest('[data-add]'); if (a) { openAttModal(a.dataset.add); return; }
   const d = e.target.closest('[data-del-att]'); if (d) { Store.removeAtt(d.dataset.delAtt).then(refreshAtts, er => toast('삭제하지 못했습니다: ' + er.message)); }
@@ -490,11 +520,13 @@ $('#files').addEventListener('click', e => {
 });
 function refreshAtts() { $$('#reader .unit-extra').forEach(x => { const u = cur().units.find(u => u.id === x.dataset.uid); const t = document.createElement('div'); t.innerHTML = extraHTML(u); x.replaceWith(t.firstElementChild); }); hydrateImages($('#reader')); renderFiles(); }
 
-let attKind = 'note', attUid = null;
+let attKind = 'note', attUid = null, attVis = 'private';
+function setVis(v) { attVis = v; $$('#att-vis button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); $('#att-vis-help').textContent = { private: '나만 볼 수 있습니다. 나중에 자료 옆에서 공개로 바꿀 수 있어요.', teachers: '강사로 등록된 모든 분이 볼 수 있습니다. (훈련생에게는 안 보임)', all: '훈련생을 포함한 모든 사용자가 볼 수 있습니다.' }[v]; }
+$('#att-vis').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) setVis(b.dataset.v); });
 function openAttModal(uid) {
   attUid = uid; const L = cur(); const u = L.units.find(x => x.id === uid);
   $('#att-target').textContent = `${lessonNo(L) ? L.no + '과 · ' : ''}${plain(u.title)}`;
-  $('#att-form').reset(); setKind('note'); $('#modal').hidden = false; $('#att-title').focus();
+  $('#att-form').reset(); setKind('note'); setVis('private'); $('#modal').hidden = false; $('#att-title').focus();
 }
 function setKind(k) { attKind = k; $$('#att-kind button').forEach(b => b.classList.toggle('on', b.dataset.k === k)); $$('#att-form [data-for]').forEach(l => l.hidden = l.dataset.for !== k); }
 $('#att-kind').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (b) setKind(b.dataset.k); });
@@ -502,7 +534,8 @@ $('#att-cancel').addEventListener('click', () => $('#modal').hidden = true);
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') $('#modal').hidden = true; });
 $('#att-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const a = { id: uidGen('a'), lid: st.lid, uid: attUid, kind: attKind, title: $('#att-title').value.trim(), at: Date.now() };
+  const a = { id: uidGen('a'), lid: st.lid, uid: attUid, kind: attKind, title: $('#att-title').value.trim(), at: Date.now(),
+    vis: attVis === 'all' && !isAdmin() ? 'teachers' : attVis, authorName: (st.me && st.me.name || '').slice(0, 60), author: myUid() };
   if (attKind === 'note') a.text = $('#att-text').value.trim();
   if (attKind === 'link') { a.url = $('#att-url').value.trim(); if (!/^https?:\/\//.test(a.url)) { toast('https:// 로 시작하는 주소를 넣어 주세요'); return; } }
   if (attKind === 'image') {
@@ -510,7 +543,7 @@ $('#att-form').addEventListener('submit', async e => {
     const r = await editImage(file).catch(() => null); if (!r) { toast('사진 넣기를 취소했습니다'); return; } a.img = r.dataUrl;
   }
   const btn = $('#att-form .primary'); btn.disabled = true;
-  try { await Store.addAtt(a); $('#modal').hidden = true; refreshAtts(); toast('자료를 추가했습니다'); }
+  try { await Store.addAtt(a); $('#modal').hidden = true; refreshAtts(); toast(`자료를 추가했습니다 · ${VIS[a.vis][0]} ${VIS[a.vis][1]}`); }
   catch (err) { toast('추가하지 못했습니다: ' + err.message); }
   finally { btn.disabled = false; }
 });
@@ -625,7 +658,7 @@ $('#tabbar').addEventListener('click', e => {
 });
 $$('[data-close]').forEach(b => b.addEventListener('click', closeSheets));
 $('#btn-panel').addEventListener('click', () => document.body.classList.contains('show-panel') ? closeSheets() : openPanel());
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideBar(); closeNote(); $('#modal').hidden = true; $('#lightbox').hidden = true; } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideBar(); closeNote(); $('#modal').hidden = true; $('#lightbox').hidden = true; $('#ttsm').hidden = true; } });
 
 /* 글자 크기 */
 const FS = [15, 16, 17, 18, 20, 22];
@@ -754,6 +787,12 @@ addEventListener('focus', () => syncNow());
 /* ---------------- 관리자: 사용자 관리 (구글 메일 초대) ---------------- */
 const ROLE_KO = { admin: '관리자', teacher: '강사', member: '훈련생' };
 let ppData = { invites: [], members: [], me: null }, ppFilter = 'all', ppEdit = null, ppConfirm = null;
+const WK = ['일', '월', '화', '수', '목', '금', '토'];
+const pad = n => String(n).padStart(2, '0');
+const fmtT = t => { const d = new Date(t), now = new Date(); const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (d.toDateString() === now.toDateString()) return '오늘 ' + hm;
+  if (d.toDateString() === new Date(now - 864e5).toDateString()) return '어제 ' + hm;
+  return `${d.getFullYear() !== now.getFullYear() ? d.getFullYear() + '. ' : ''}${d.getMonth() + 1}/${d.getDate()}(${WK[d.getDay()]}) ${hm}`; };
 const fmtD = t => t ? new Date(t).toLocaleDateString('ko-KR', { year: '2-digit', month: 'numeric', day: 'numeric' }) : '';
 function peopleRows() {
   const rows = new Map();
@@ -781,9 +820,11 @@ function renderPeople() {
     return `<li class="pp-item ${r.status}" data-k="${key}">
       <div class="pp-main"><b>${esc(r.name || r.email || '(이름 없음)')}</b>${r.me ? '<span class="pp-me">나</span>' : ''}
         <span class="pp-role r-${r.role}">${ROLE_KO[r.role] || r.role}</span><span class="pp-stat s-${STAT[r.status][1]}">${STAT[r.status][0]}</span></div>
+      ${r.member && r.member.lastLogin ? `<div class="pp-last">최근 접속 <b>${fmtT(r.member.lastLogin)}</b>${r.member.loginCount ? ` · 총 ${r.member.loginCount}회` : ''}${r.member.lastDev ? ` · ${esc(r.member.lastDev)}` : ''}</div>` : r.member ? '<div class="pp-last">접속 기록 없음</div>' : ''}
       <div class="pp-sub">${esc(r.email || '메일 정보 없음(직접 등록)')}${r.invite && r.invite.createdAt ? ` · 등록 ${fmtD(r.invite.createdAt)}` : ''}${r.member && r.member.joinedAt ? ` · 가입 ${fmtD(r.member.joinedAt)}` : ''}${r.invite && r.invite.stoppedAt && r.status === 'off' ? ` · 중지 ${fmtD(r.invite.stoppedAt)}` : ''}</div>
       ${r.memo ? `<p class="pp-memo">${esc(r.memo)}</p>` : ''}
       <div class="pp-btns">
+        ${r.email ? '<button type="button" class="ghost" data-act="logs">접속 기록</button>' : ''}
         <button type="button" class="ghost" data-act="edit">수정</button>
         ${r.me ? '' : r.status === 'off'
           ? `<button type="button" class="ghost" data-act="on">다시 허용</button><button type="button" class="ghost danger" data-act="${conf ? 'del!' : 'del'}">${conf ? '정말 기록 삭제' : '기록 삭제'}</button>`
@@ -795,7 +836,61 @@ async function loadPeople() {
   $('#pp-list').innerHTML = '<li class="empty">불러오는 중…</li>';
   try { ppData = await B.listPeople(); renderPeople(); } catch (e) { $('#pp-list').innerHTML = `<li class="empty">불러오지 못했습니다: ${esc(e.code || e.message)}</li>`; }
 }
-$('#btn-people').addEventListener('click', () => { closeSheets(); $('#people').hidden = false; ppEdit = null; ppConfirm = null; loadPeople(); });
+$('#btn-people').addEventListener('click', () => { closeSheets(); $('#people').hidden = false; ppEdit = null; ppConfirm = null; setPpTab('users'); loadPeople(); });
+
+/* 접속 기록 (관리자만) */
+const KIND = { in: ['접속', 'ok'], denied: ['미등록 시도', 'bad'], stopped: ['중지된 계정 시도', 'bad'] };
+let logs = [], logsEnd = false, logWho = '', logKind = 'all';
+function setPpTab(t, who) {
+  $$('#pp-tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  $('#pp-users').hidden = t !== 'users'; $('#pp-logs').hidden = t !== 'logs';
+  if (t === 'logs') { if (who !== undefined) logWho = who; if (!logs.length) loadLogs(); else renderLogs(); }
+}
+$('#pp-tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (b) setPpTab(b.dataset.t, b.dataset.t === 'logs' ? '' : undefined); });
+async function loadLogs(more) {
+  const btn = $('#lg-more'); btn.disabled = true;
+  if (!more) { logs = []; logsEnd = false; $('#lg-list').innerHTML = '<li class="empty">불러오는 중…</li>'; }
+  try {
+    const got = await B.listLogs(more && logs.length ? logs[logs.length - 1].at : null);
+    logs = logs.concat(got); logsEnd = got.length < 300; renderLogs();
+  } catch (e) { $('#lg-list').innerHTML = `<li class="empty">불러오지 못했습니다: ${esc(e.code || e.message)}<br>보안 규칙 v0.5를 게시했는지 확인해 주세요.</li>`; }
+  finally { btn.disabled = false; }
+}
+function logRows() {
+  return logs.filter(l => (!logWho || l.email === logWho) && (logKind === 'all' || (logKind === 'in' ? l.kind === 'in' : l.kind !== 'in')));
+}
+function renderLogs() {
+  const who = new Map(); logs.forEach(l => { if (l.email && !who.has(l.email)) who.set(l.email, l.name || l.email); });
+  if (logWho && !who.has(logWho)) who.set(logWho, logWho);
+  $('#lg-who').innerHTML = `<option value="">모든 사람</option>` + [...who].sort((a, b) => a[1].localeCompare(b[1], 'ko')).map(([e, n]) => `<option value="${esc(e)}" ${e === logWho ? 'selected' : ''}>${esc(n)} (${esc(e)})</option>`).join('');
+  const rows = logRows(); let day = '';
+  const people = new Set(rows.filter(l => l.kind === 'in').map(l => l.email));
+  $('#lg-sum').textContent = rows.length ? `${rows.length}건 · 접속한 사람 ${people.size}명${logsEnd ? '' : ' · 더 오래된 기록은 [더 불러오기]'}` : '';
+  $('#lg-list').innerHTML = rows.map(l => {
+    const d = new Date(l.at); const dk = `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} (${WK[d.getDay()]})`;
+    const head = dk !== day ? `<li class="lg-day">${dk}</li>` : ''; day = dk;
+    const [kt, kc] = KIND[l.kind] || [l.kind, ''];
+    return `${head}<li class="lg-row"><span class="lg-t">${pad(d.getHours())}:${pad(d.getMinutes())}</span>
+      <span class="lg-who"><b>${esc(l.name || '(이름 없음)')}</b>${l.role ? ` <span class="pp-role r-${l.role}">${ROLE_KO[l.role] || l.role}</span>` : ''}<small>${esc(l.email || '')}</small></span>
+      <span class="lg-dev">${esc(l.dev || '')}</span><span class="lg-k k-${kc}">${kt}</span></li>`;
+  }).join('') || '<li class="empty">기록이 없습니다. (v0.11부터 로그인할 때마다 쌓입니다)</li>';
+  $('#lg-more').hidden = logsEnd;
+}
+$('#lg-who').addEventListener('change', e => { logWho = e.target.value; renderLogs(); });
+$('#lg-kind').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; logKind = b.dataset.k; $$('#lg-kind button').forEach(x => x.classList.toggle('on', x === b)); renderLogs(); });
+$('#lg-more').addEventListener('click', () => loadLogs(true));
+$('#lg-reload').addEventListener('click', () => loadLogs());
+$('#lg-csv').addEventListener('click', () => {
+  const rows = logRows(); if (!rows.length) { toast('내려받을 기록이 없습니다'); return; }
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [['날짜', '시각', '이름', '구글 메일', '역할', '결과', '기기'].map(q).join(',')].concat(rows.map(l => { const d = new Date(l.at);
+    return [`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, `${pad(d.getHours())}:${pad(d.getMinutes())}`, l.name, l.email, ROLE_KO[l.role] || '미등록', (KIND[l.kind] || [l.kind])[0], l.dev].map(q).join(','); }));
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); const n = new Date();
+  a.href = URL.createObjectURL(blob); a.download = `제자의삶_접속기록_${n.getFullYear()}${pad(n.getMonth() + 1)}${pad(n.getDate())}.csv`;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  toast('엑셀에서 열 수 있는 파일(CSV)로 내려받았습니다');
+});
 $('#pp-close').addEventListener('click', () => $('#people').hidden = true);
 $('#pp-q').addEventListener('input', renderPeople);
 $('#pp-filter').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (!b) return; ppFilter = b.dataset.f; $$('#pp-filter button').forEach(x => x.classList.toggle('on', x === b)); renderPeople(); });
@@ -816,6 +911,7 @@ $('#pp-list').addEventListener('click', async e => {
   const r = peopleRows().find(x => (x.email || 'uid:' + (x.member && x.member.uid)) === key); if (!r) return;
   const act = b.dataset.act;
   try {
+    if (act === 'logs') { setPpTab('logs', r.email); return; }
     if (act === 'edit') { ppEdit = key; ppConfirm = null; return renderPeople(); }
     if (act === 'cancel') { ppEdit = null; return renderPeople(); }
     if (act === 'off' || act === 'del') { ppConfirm = key; renderPeople(); setTimeout(() => { if (ppConfirm === key) { ppConfirm = null; renderPeople(); } }, 4000); return; }
@@ -836,6 +932,32 @@ $('#pp-list').addEventListener('click', async e => {
     await loadPeople();
   } catch (err) { toast('처리하지 못했습니다: ' + (err.code || err.message)); b.disabled = false; }
 });
+
+/* ---------------- 음성 듣기 ---------------- */
+function setupTTS() {
+  if (tts) return;
+  const readable = el => el.querySelector('.tx') && !el.closest('.unit-extra');
+  tts = initTTS({
+    toast,
+    getRate: () => Store.pref('ttsRate', 1),
+    setRate: v => Store.setPref('ttsRate', v),
+    where: el => { const sec = el.closest('.unit'); const L = cur(); const u = L && sec && L.units.find(x => x.id === sec.id); return (L && lessonNo(L) ? L.no + '과 · ' : '') + (u ? plain(u.title) : ''); },
+    // 어디서부터 읽을지: 고른 글자가 있으면 그 문단, 없으면 지금 화면 맨 위 문단
+    getStart(auto) {
+      const all = $$('#reader .blk').filter(readable); if (!all.length) return null;
+      if (auto) return all[0];
+      const sel = getSelection(); if (sel.rangeCount && !sel.isCollapsed) { const n = sel.anchorNode; const b = n && (n.nodeType === 1 ? n : n.parentElement).closest('#reader .blk'); if (b && readable(b)) { sel.removeAllRanges(); return b; } }
+      const top = isMob() ? 110 : $('#reader').getBoundingClientRect().top + 10;
+      return all.find(b => b.getBoundingClientRect().bottom > top) || all[0];
+    },
+    getBlocks(start) { const all = $$('#reader .blk').filter(readable); const i = Math.max(0, all.indexOf(start)); return all.slice(i); },
+    // 폰: 한 단원을 다 읽으면 다음 단원으로 넘어가서 계속 읽음
+    async onEnd() {
+      const L = cur(); if (!L || !isMob() || st.ui >= L.body.length - 1) return false;
+      goUnit(st.ui + 1); toast('다음 단원: ' + plain(L.body[st.ui].title)); return true;
+    }
+  });
+}
 
 /* ---------------- 시작: 로그인 → 권한 확인 → 교재 ---------------- */
 const firstReady = () => { const x = st.index.lessons.find(l => l.ready && l.no >= 1) || st.index.lessons.find(l => l.ready); return x ? x.id : null; };
@@ -866,6 +988,7 @@ async function enterApp(info) {
   $('#btn-people').hidden = info.role !== 'admin';
   document.body.dataset.role = info.role || 'member'; st.me = info;
   $('#btn-logout').hidden = B.kind !== 'firebase';
+  setupTTS();
   await loadIndex();
   await loadBooks().catch(() => {});
   gate('none');
@@ -880,6 +1003,11 @@ async function enterApp(info) {
     lid = m[1]; const L = await loadLesson(lid); ui = Math.max(0, L.body.findIndex(u => u.id === h));
   } else { const p = Store.pref('pos', null); if (p && st.index.lessons.some(l => l.id === p.lid && l.ready)) { lid = p.lid; ui = p.ui; } }
   await openLesson(lid, ui);
+  // 관리자: 공개 설정이 없던 예전 자료를 '전체 공개'로 한 번 정리 (이 기기에서 한 번만)
+  if (info.role === 'admin' && B.kind === 'firebase') {
+    let doneKey = null; try { doneKey = localStorage.getItem('jesam.attvis.v1'); } catch (e) {}
+    if (!doneKey) B.migrateAttVis(st.index.lessons.map(l => l.id)).then(n => { try { localStorage.setItem('jesam.attvis.v1', String(Date.now())); } catch (e) {} if (n) { toast(`예전 자료 ${n}개를 🌐 전체 공개로 정리했습니다`); syncNow(true); } }).catch(e => console.warn('migrate', e));
+  }
 }
 
 (async function start() {

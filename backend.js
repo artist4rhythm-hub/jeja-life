@@ -3,7 +3,9 @@
  * LocalBackend   : 이 기기 저장 + data/ 폴더 (개발·시험용, 주소 끝에 ?local)
  * 두 백엔드는 같은 함수들을 제공하므로 app.js는 어느 쪽인지 몰라도 됩니다.
  */
+import { device } from './tts.js';
 const SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
+const devInfo = () => { try { return device().label.slice(0, 90); } catch (e) { return '알 수 없음'; } };
 
 export async function createBackend() {
   const useLocal = !window.FIREBASE_CONFIG || /[?&]local\b/.test(location.search);
@@ -24,6 +26,29 @@ async function FirebaseBackend(config) {
   let user = null;
   const u = () => { if (!user) throw new Error('로그인이 필요합니다'); return user.uid; };
   const pageCache = new Map();
+  let myRole = null;
+
+  // 접속 기록: 로그인(앱 열기)할 때마다 한 줄. 같은 기기에서 30분 안에 다시 열면 중복으로 남기지 않음
+  async function logLogin(fu, role, kind) {
+    try {
+      const k = 'jesam.log.' + fu.uid + '.' + kind; let last = 0;
+      try { last = +localStorage.getItem(k) || 0; } catch (e) {}
+      if (Date.now() - last < 30 * 60 * 1000) return;
+      const at = Date.now(), dev = devInfo();
+      await F.addDoc(F.collection(db, 'loginLogs'), { uid: fu.uid, email: (fu.email || '').toLowerCase(), name: (fu.displayName || fu.email || '').slice(0, 90), role: role || '', kind, dev, at });
+      if (role) await F.updateDoc(d('members', fu.uid), { lastLogin: at, lastDev: dev, loginCount: F.increment(1) }).catch(e => console.warn('lastLogin', e));
+      try { localStorage.setItem(k, String(at)); } catch (e) {}
+    } catch (e) { console.warn('loginLog', e); }
+  }
+  // 자료 목록: 권한에 맞는 것만 불러오기 (관리자 = 전부 / 강사 = 내 것 + 강사 공개 + 전체 공개 / 훈련생 = 전체 공개)
+  function attQueries(lid) {
+    const col = F.collection(db, 'lessons', lid, 'attachments');
+    if (myRole === 'admin') return [col];
+    const qs = [F.query(col, F.where('vis', '==', 'all')), F.query(col, F.where('author', '==', u()))];
+    if (myRole === 'teacher') qs.push(F.query(col, F.where('vis', '==', 'teachers')));
+    return qs;
+  }
+  const attSort = map => [...map.values()].sort((a, b) => a.at - b.at);
 
   return {
     kind: 'firebase',
@@ -45,6 +70,8 @@ async function FirebaseBackend(config) {
             } else if (inv.exists()) reason = 'stopped';
           } catch (e) { console.warn('invite', e); }
         }
+        myRole = role;
+        logLogin(fu, role, role ? 'in' : reason === 'stopped' ? 'stopped' : 'denied');
         cb({ state: role ? 'in' : 'nomember', reason, uid: fu.uid, name: fu.displayName || fu.email, email: fu.email, role });
       });
       A.getRedirectResult(auth).catch(() => {});
@@ -94,16 +121,30 @@ async function FirebaseBackend(config) {
       return () => offs.forEach(f => f());
     },
     watchAtts(lid, cb) {
-      return F.onSnapshot(F.collection(db, 'lessons', lid, 'attachments'), snap => {
-        const out = []; snap.forEach(x => out.push({ ...x.data(), id: x.id, lid })); cb(out.sort((a, b) => a.at - b.at));
-      }, e => console.error('atts', e));
+      const qs = attQueries(lid); const parts = qs.map(() => new Map()); const ready = qs.map(() => false);
+      const emit = () => { if (!ready.every(Boolean)) return; const all = new Map(); parts.forEach(p => p.forEach((v, k) => all.set(k, v))); cb(attSort(all)); };
+      const offs = qs.map((q, i) => F.onSnapshot(q, snap => {
+        parts[i] = new Map(); snap.forEach(x => parts[i].set(x.id, { ...x.data(), id: x.id, lid })); ready[i] = true; emit();
+      }, e => { console.error('atts', e); ready[i] = true; emit(); }));
+      return () => offs.forEach(f => f());
     },
     async listAtts(lid) {
-      const s = await F.getDocs(F.collection(db, 'lessons', lid, 'attachments'));
-      const out = []; s.forEach(x => out.push({ ...x.data(), id: x.id, lid })); return out.sort((a, b) => a.at - b.at);
+      const snaps = await Promise.all(attQueries(lid).map(q => F.getDocs(q).catch(e => { console.warn('atts', e); return null; })));
+      const all = new Map(); snaps.forEach(s => s && s.forEach(x => all.set(x.id, { ...x.data(), id: x.id, lid }))); return attSort(all);
     },
     async addAtt(a) { const { id, lid, ...rest } = a; await F.setDoc(d('lessons', lid, 'attachments', id), { ...rest, author: u() }); },
+    updateAtt: (a, patch) => F.updateDoc(d('lessons', a.lid, 'attachments', a.id), patch),
     removeAtt: a => F.deleteDoc(d('lessons', a.lid, 'attachments', a.id)),
+    // 관리자: 공개 설정이 없던 예전 자료에 '전체 공개'를 붙여 줌 (예전처럼 모두에게 보이도록) — 한 번만 실행
+    async migrateAttVis(lids) {
+      let n = 0;
+      for (const lid of lids) {
+        const s = await F.getDocs(F.collection(db, 'lessons', lid, 'attachments'));
+        const todo = []; s.forEach(x => { if (!x.data().vis) todo.push(F.updateDoc(x.ref, { vis: 'all' })); });
+        await Promise.all(todo); n += todo.length;
+      }
+      return n;
+    },
 
     // 메모 사진 (한 장씩 따로 저장 — 문서 용량 제한 때문)
     putPhoto: (id, d) => F.setDoc(d_('users', u(), 'photos', id), d),
@@ -121,6 +162,14 @@ async function FirebaseBackend(config) {
     deleteInvite: email => F.deleteDoc(d('invites', email.toLowerCase())),
     setMemberRole: (uid, role) => F.updateDoc(d('members', uid), { role }),
     removeMember: uid => F.deleteDoc(d('members', uid)),
+    // 관리자: 접속 기록 (최신순, 한 번에 300줄씩)
+    async listLogs(after) {
+      const parts = [F.collection(db, 'loginLogs'), F.orderBy('at', 'desc')];
+      if (after) parts.push(F.startAfter(after));
+      parts.push(F.limit(300));
+      const s = await F.getDocs(F.query(...parts)); const out = []; s.forEach(x => out.push({ ...x.data(), id: x.id }));
+      return out;
+    },
 
     // 관리자: 교재 올리기
     putIndex: obj => F.setDoc(d('lessons', '_index'), { json: JSON.stringify(obj), at: Date.now() }),
@@ -159,8 +208,14 @@ function LocalBackend() {
     watchAtts: () => () => {},
     listAtts: async lid => Object.values(db.atts).filter(a => a.lid === lid).sort((a, b) => a.at - b.at),
     addAtt: a => { db.atts[a.id] = { ...a, author: 'local' }; return save(); },
+    updateAtt: (a, patch) => { Object.assign(db.atts[a.id] || {}, patch); return save(); },
+    migrateAttVis: async () => 0,
+    listLogs: async () => [
+      { id: 'x1', uid: 'local', email: 'me@example.com', name: '이 기기', role: 'admin', kind: 'in', dev: devInfo(), at: Date.now() - 60000 },
+      { id: 'x2', uid: 't1', email: 'teacher@gmail.com', name: '김강사', role: 'teacher', kind: 'in', dev: '아이패드 · 홈 화면 앱', at: Date.now() - 86400000 },
+      { id: 'x3', uid: 'z9', email: 'stranger@gmail.com', name: '모르는 사람', role: '', kind: 'denied', dev: '안드로이드 · Chrome', at: Date.now() - 2 * 86400000 }],
     removeAtt: a => { delete db.atts[a.id]; return save(); },
-    async listPeople() { return { invites: Object.values(db.invites || {}), members: [{ uid: 'local', role: 'admin', name: '이 기기', email: 'me@example.com' }], me: 'local' }; },
+    async listPeople() { return { invites: Object.values(db.invites || {}), members: [{ uid: 'local', role: 'admin', name: '이 기기', email: 'me@example.com', lastLogin: Date.now() - 60000, loginCount: 12, lastDev: devInfo() }, { uid: 't1', role: 'teacher', name: '김강사', email: 'teacher@gmail.com', lastLogin: Date.now() - 86400000, loginCount: 3, lastDev: '아이패드 · 홈 화면 앱' }], me: 'local' }; },
     saveInvite: (email, data) => { db.invites = db.invites || {}; const k = email.toLowerCase(); db.invites[k] = { ...(db.invites[k] || {}), ...data, id: k }; return save(); },
     deleteInvite: email => { if (db.invites) delete db.invites[email.toLowerCase()]; return save(); },
     setMemberRole: async () => {}, removeMember: async () => {},
