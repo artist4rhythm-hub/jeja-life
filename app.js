@@ -4,6 +4,7 @@
  */
 import { createBackend } from './backend.js';
 import { editImage } from './imgedit.js';
+import { initBible, openRef as bibleOpen, linkRefs, loadBooks } from './bible.js';
 let B = null;
 (() => {
 'use strict';
@@ -49,7 +50,7 @@ const Store = (() => {
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<i>$2</i>');
+const inline = s => linkRefs(esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<i>$2</i>'));
 const plain = s => String(s || '').replace(/\*\*/g, '').replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1$2');
 const uidGen = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const mq = matchMedia('(max-width:759px)');
@@ -113,7 +114,7 @@ function blockHTML(b, prev) {
     case 'h5': return `<h5 class="blk" ${A}>${pg}${tx(b.text)}</h5>`;
     case 'lead': return `<p class="blk lead" ${A}>${pg}${tx(b.text)}</p>`;
     case 'li': return `<p class="blk li" ${A}>${pg}${tx(b.text)}</p>`;
-    case 'verse': return `<p class="blk verse" ${A}>${pg}${b.ref ? `<span class="ref">[${esc(b.ref)}]</span>` : ''}${tx(b.text)}</p>`;
+    case 'verse': return `<p class="blk verse" ${A}>${pg}${b.ref ? `<span class="ref vref" data-ref="${esc(b.ref)}" title="성경에서 보기">[${esc(b.ref)}]</span>` : ''}${tx(b.text)}</p>`;
     case 'indent': return `<p class="blk indent" ${A}>${pg}${tx(b.text)}</p>`;
     case 'cite': return `<p class="blk cite" ${A}>${pg}${tx('— ' + b.text)}</p>`;
     case 'right': return `<p class="blk right" ${A}>${pg}${tx(b.text)}</p>`;
@@ -210,6 +211,7 @@ function wrapFind(tx, q) {
 
 $('#reader').addEventListener('click', e => {
   const t = e.target;
+  const vr = t.closest('.vref'); if (vr) { e.preventDefault(); openBible(vr.dataset.ref); return; }
   const u = t.closest('.chips [data-unit]'); if (u) { goUnit(+u.dataset.unit); return; }
   const g = t.closest('[data-go]');
   if (g) { const L = cur(); if (g.dataset.next) Store.setDone(L.body[st.ui].id, true);
@@ -294,7 +296,7 @@ function drawEnd() {
   const r = segmentsFromSelection(); if (!r) { getSelection().removeAllRanges(); return; }
   selSegs = r.segs; addMark(penColor);
 }
-const skipTarget = t => t.closest('textarea, input, button, a, mark.hl, .unit-extra');
+const skipTarget = t => t.closest('textarea, input, button, a, mark.hl, .unit-extra, .vref');
 const reader = $('#reader');
 if (IOS) {
   reader.addEventListener('touchstart', e => {
@@ -411,6 +413,7 @@ $('#np-in').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaK
 // 칠한 곳을 두 번 클릭할 때 단어가 선택되지 않게
 $('#reader').addEventListener('mousedown', e => { if (e.detail >= 2 && e.target.closest('mark.hl')) e.preventDefault(); });
 $('#reader').addEventListener('click', e => {
+  if (e.target.closest('.vref')) return;
   const m = e.target.closest('mark.hl'); if (!m) return;
   const gid = m.dataset.gid, now = Date.now();
   if (lastTap.gid === gid && now - lastTap.t < 380) {           // 두 번 누름 → 바로 쓰기
@@ -535,8 +538,16 @@ function showPage(p, silent) {
 $('#pg-prev').addEventListener('click', () => { const L = cur(); const i = L.pages.indexOf(st.pg); if (i > 0) showPage(L.pages[i - 1]); });
 $('#pg-next').addEventListener('click', () => { const L = cur(); const i = L.pages.indexOf(st.pg); if (i < L.pages.length - 1) showPage(L.pages[i + 1]); });
 $('#pg-zoom').addEventListener('click', () => $('#orig-view').classList.toggle('zoom'));
-function setPanelTab(p) { $$('.ptabs button').forEach(b => b.classList.toggle('on', b.dataset.p === p)); $$('#panel [data-pp]').forEach(s => s.hidden = s.dataset.pp !== p); $('#panel-title').textContent = { notes: '내 노트', files: '자료', orig: '원본 보기' }[p]; }
-$('.ptabs').addEventListener('click', e => { const b = e.target.closest('[data-p]'); if (!b) return; setPanelTab(b.dataset.p); setOrig(b.dataset.p === 'orig'); });
+function setPanelTab(p) { $$('.ptabs button').forEach(b => b.classList.toggle('on', b.dataset.p === p)); $$('#panel [data-pp]').forEach(s => s.hidden = s.dataset.pp !== p); $('#panel-title').textContent = { notes: '내 노트', files: '자료', orig: '원본 보기', bible: '성경' }[p]; if (p === 'bible') ensureBible(); }
+$('.ptabs').addEventListener('click', e => { const b = e.target.closest('[data-p]'); if (!b) return; setPanelTab(b.dataset.p); setOrig(b.dataset.p === 'orig' || b.dataset.p === 'bible'); });
+/* 성경 패널 */
+let bibleReady = false;
+function ensureBible() { if (bibleReady) return; bibleReady = true; initBible($('#bible')); bibleOpen('요 3:16'); }
+function openBible(ref) {
+  setPanelTab('bible'); setOrig(true);
+  if (isMob() || matchMedia('(max-width:1199px)').matches) { openPanel(); tabOn('bible'); }
+  bibleOpen(ref);
+}
 function setOrig(on) { document.body.classList.toggle('orig-on', on && !isMob()); $('#btn-orig').setAttribute('aria-pressed', on); }
 function openOrig(p) {
   if (p) showPage(p);
@@ -607,6 +618,7 @@ $('#tabbar').addEventListener('click', e => {
   const b = e.target.closest('[data-tab]'); if (!b) return; const t = b.dataset.tab;
   if (t === 'read') { closeSheets(); return; }
   if (t === 'notes') { setPanelTab('notes'); openPanel(); tabOn('notes'); return; }
+  if (t === 'bible') { setPanelTab('bible'); openPanel(); tabOn('bible'); return; }
   document.body.classList.remove('show-panel'); document.body.classList.add('show-nav'); tabOn(t);
   $('#nav-title').textContent = t === 'search' ? '검색' : '목차';
   if (t === 'search') setTimeout(() => $('#q').focus(), 250);
@@ -766,6 +778,7 @@ async function enterApp(info) {
   $('#btn-admin').hidden = !(info.role === 'admin' && B.kind === 'firebase');
   $('#btn-logout').hidden = B.kind !== 'firebase';
   await loadIndex();
+  await loadBooks().catch(() => {});
   gate('none');
   if (!st.index || !firstReady()) {
     $('#reader').innerHTML = `<div class="page-wrap"><h2>교재 데이터가 아직 없습니다</h2><p>${info.role === 'admin' ? '받은 <b>교재데이터</b> 폴더를 [교재 올리기]에서 올려 주세요.' : '관리자가 교재를 올리면 여기에 표시됩니다.'}</p></div>`;
