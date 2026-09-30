@@ -299,3 +299,40 @@ mark.hl.note-end::after{content:"✎";display:inline-block;margin-left:3px;paddi
 .np-act{display:flex;align-items:center;gap:6px}
 .np-act .primary,.np-act .ghost{padding:6px 14px;font-size:13px}
 .np-del{font-size:12px;color:var(--ul);padding:4px 2px}
+
+/* v0.8 상단 바: 제목을 가운데로 (아이패드 창 모드의 왼쪽 위 ●●● 버튼에 가리지 않게) */
+.top{display:grid;grid-template-columns:minmax(84px,1fr) minmax(0,auto) minmax(84px,1fr);gap:10px}
+.top > #btn-nav{grid-column:1;justify-self:start}
+.top .brand{grid-column:2;justify-self:center;flex:none;justify-content:center;text-align:center;max-width:100%}
+.top .top-actions{grid-column:3;justify-self:end}
+@media (max-width:759px){
+  .top{grid-template-columns:minmax(60px,1fr) minmax(0,auto) minmax(60px,1fr)}
+  .top .brand{align-items:center}
+}
+
+/* v0.8 메모 사진 */
+mark.hl.note-end.has-photo::after{content:"✎ 📷"}
+.np-photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:6px}
+.np-ph{position:relative;margin:0;aspect-ratio:1;border-radius:8px;overflow:hidden;background:var(--bg);border:1px solid var(--line)}
+.np-ph img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.np-ph-load{display:grid;place-items:center;height:100%;font-size:11px;color:var(--muted)}
+.np-ph-x{position:absolute;top:3px;right:3px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;font-size:16px;line-height:1;display:grid;place-items:center}
+.np-addphoto{padding:5px 10px!important;font-size:12px!important}
+.notepop{width:min(380px,calc(100vw - 20px))}
+/* 사진 편집기 */
+.ie-box{width:min(760px,100%);max-height:calc(100% - 24px);overflow:auto}
+.ie-stage{display:grid;place-items:center;background:#111;border-radius:10px;padding:12px;min-height:200px}
+.ie-wrap{position:relative;overflow:hidden;touch-action:none}
+.ie-cv{display:block}
+.ie-crop{position:absolute;box-shadow:0 0 0 9999px rgba(0,0,0,.55);outline:2px solid #fff;cursor:move;touch-action:none;
+  background-image:linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px);background-size:33.33% 33.33%}
+.ie-crop i{position:absolute;width:22px;height:22px;border:3px solid #fff;touch-action:none}
+.ie-crop i[data-h="nw"]{left:-4px;top:-4px;border-right:0;border-bottom:0;cursor:nwse-resize}
+.ie-crop i[data-h="ne"]{right:-4px;top:-4px;border-left:0;border-bottom:0;cursor:nesw-resize}
+.ie-crop i[data-h="sw"]{left:-4px;bottom:-4px;border-right:0;border-top:0;cursor:nesw-resize}
+.ie-crop i[data-h="se"]{right:-4px;bottom:-4px;border-left:0;border-top:0;cursor:nwse-resize}
+.ie-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.ie-tools .seg{flex:0 1 auto}
+.ie-tools .seg button{padding:6px 12px}
+.ie-info{font-size:12px;margin:0}
+.ie-tools .seg button{white-space:nowrap}

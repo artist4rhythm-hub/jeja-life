@@ -3,6 +3,7 @@
  * (주소 끝에 ?local 을 붙이면 data/ 폴더와 이 기기 저장소로 시험 실행)
  */
 import { createBackend } from './backend.js';
+import { editImage } from './imgedit.js';
 let B = null;
 (() => {
 'use strict';
@@ -13,15 +14,15 @@ const Store = (() => {
   const fail = e => { console.error(e); toast('저장하지 못했습니다. 인터넷 연결을 확인해 주세요'); };
   const groupDoc = gid => {
     const segs = mem.marks.filter(m => m.gid === gid); if (!segs.length) return null; const f = segs[0];
-    return { lid: f.lid, c: f.c, note: f.note || '', at: f.at, segs: segs.map(x => ({ block: x.block, s: x.s, e: x.e, quote: x.quote })) };
+    return { lid: f.lid, c: f.c, note: f.note || '', photos: f.photos || [], at: f.at, segs: segs.map(x => ({ block: x.block, s: x.s, e: x.e, quote: x.quote })) };
   };
   let prefT;
   return {
     async load() { const u = await B.loadUser(); Object.assign(mem, { marks: u.marks, answers: u.answers, done: u.done, prefs: u.prefs || {} }); },
     marks: () => mem.marks,
     addMarks(list) { mem.marks.push(...list); B.saveMark(list[0].gid, groupDoc(list[0].gid)).catch(fail); },
-    removeGroup(gid) { mem.marks = mem.marks.filter(m => m.gid !== gid); B.deleteMark(gid).catch(fail); },
-    setNote(gid, note) { let first = true; mem.marks.forEach(m => { if (m.gid === gid) { m.note = first ? note : ''; first = false; } }); B.saveMark(gid, groupDoc(gid)).catch(fail); },
+    removeGroup(gid) { const f = mem.marks.find(m => m.gid === gid); (f && f.photos || []).forEach(id => B.deletePhoto(id).catch(() => {})); mem.marks = mem.marks.filter(m => m.gid !== gid); B.deleteMark(gid).catch(fail); },
+    setNote(gid, note, photos) { let first = true; mem.marks.forEach(m => { if (m.gid === gid) { m.note = first ? note : ''; if (first && photos) m.photos = photos; first = false; } }); return B.saveMark(gid, groupDoc(gid)).catch(fail); },
     answers: () => mem.answers,
     async setAnswer(id, t) {
       const v = t.trim() ? t : ''; if (v) mem.answers[id] = { t: v, at: Date.now() }; else delete mem.answers[id];
@@ -346,10 +347,11 @@ function openNote(gid, rect, edit) {
   popGid = gid; hideBar();
   const quote = segs.map(x => x.quote).join(' … '), note = segs[0].note || '';
   const q = $('.np-quote', pop); q.textContent = quote.length > 90 ? quote.slice(0, 90) + '…' : quote; q.className = 'np-quote c-' + segs[0].c;
-  $('.np-text', pop).textContent = note || '아직 메모가 없습니다. 두 번 누르거나 [메모 쓰기]를 누르세요.';
+  popPhotos = (segs[0].photos || []).map(id => ({ id, url: photoCache.get(id) || null })); removedPhotos = [];
+  $('.np-text', pop).textContent = note || (popPhotos.length ? '' : '아직 메모가 없습니다. 두 번 누르거나 [메모 쓰기]를 누르세요.');
   $('.np-text', pop).classList.toggle('empty', !note);
   $('#np-in').value = note;
-  setPopMode(edit);
+  setPopMode(edit); renderPopPhotos();
   pop.hidden = false;
   const w = pop.offsetWidth, h = pop.offsetHeight, vw = document.documentElement.clientWidth, vh = innerHeight;
   const x = Math.min(Math.max(10, rect.left + rect.width / 2 - w / 2), vw - w - 10);
@@ -360,15 +362,48 @@ function openNote(gid, rect, edit) {
 function setPopMode(edit) {
   pop.classList.toggle('editing', edit);
   $('#np-in').hidden = !edit; $('.np-text', pop).hidden = edit;
-  $('#np-edit').hidden = edit; $('#np-save').hidden = !edit;
+  $('#np-edit').hidden = edit; $('#np-save').hidden = !edit; $('#np-addphoto').hidden = !edit;
+  if (typeof renderPopPhotos === 'function') renderPopPhotos();
   const has = !!(Store.marks().find(m => m.gid === popGid) || {}).note;
   $('#np-edit').textContent = has ? '메모 수정' : '메모 쓰기';
 }
 function closeNote() { pop.hidden = true; popGid = null; }
 $('#np-edit').addEventListener('click', () => { setPopMode(true); $('#np-in').focus(); });
-$('#np-save').addEventListener('click', () => {
-  if (!popGid) return; const v = $('#np-in').value.trim(); Store.setNote(popGid, v);
-  closeNote(); applyMarks(); renderNotes(); toast(v ? '메모를 저장했습니다' : '메모를 비웠습니다');
+/* 메모 사진 */
+let popPhotos = [], removedPhotos = [];
+const photoCache = new Map();
+async function photoUrl(id) {
+  if (photoCache.has(id)) return photoCache.get(id);
+  try { const u = await B.getPhoto(id); if (u) photoCache.set(id, u); return u; } catch (e) { return null; }
+}
+function renderPopPhotos() {
+  const box = $('#np-photos'); const editing = pop.classList.contains('editing');
+  box.hidden = !popPhotos.length;
+  box.innerHTML = popPhotos.map((p, i) => `<figure class="np-ph" data-i="${i}">${p.url ? `<img src="${p.url}" alt="메모 사진 ${i + 1}">` : '<span class="np-ph-load">불러오는 중</span>'}${editing ? `<button type="button" class="np-ph-x" data-x="${i}" aria-label="사진 빼기">×</button>` : ''}</figure>`).join('');
+  popPhotos.forEach((p, i) => { if (!p.url) photoUrl(p.id).then(u => { if (u && popPhotos[i] === p) { p.url = u; renderPopPhotos(); } }); });
+}
+$('#np-photos').addEventListener('click', e => {
+  const x = e.target.closest('[data-x]'); if (x) { const [p] = popPhotos.splice(+x.dataset.x, 1); if (p && !p.isNew) removedPhotos.push(p.id); renderPopPhotos(); return; }
+  const img = e.target.closest('.np-ph img'); if (img) { const lb = $('#lightbox'); $('img', lb).src = img.src; lb.hidden = false; }
+});
+$('#np-addphoto').addEventListener('click', () => { if (popPhotos.length >= 6) { toast('사진은 메모 하나에 6장까지 넣을 수 있습니다'); return; } $('#np-file').click(); });
+$('#np-file').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const keep = popGid; const r = await editImage(f).catch(err => { toast('사진을 열 수 없습니다'); return null; });
+  if (!r || popGid !== keep) return;
+  popPhotos.push({ id: uidGen('ph'), url: r.dataUrl, isNew: true }); renderPopPhotos();
+  toast(`사진 추가 · ${Math.round(r.bytes / 1024)}KB (${r.w}×${r.h})`);
+});
+$('#np-save').addEventListener('click', async () => {
+  if (!popGid) return; const gid = popGid, v = $('#np-in').value.trim(); const btn = $('#np-save');
+  btn.disabled = true; btn.textContent = popPhotos.some(p => p.isNew) ? '사진 저장 중…' : '저장 중…';
+  try {
+    for (const p of popPhotos.filter(p => p.isNew)) { await B.putPhoto(p.id, { gid, img: p.url, at: Date.now() }); photoCache.set(p.id, p.url); p.isNew = false; }
+    removedPhotos.forEach(id => { B.deletePhoto(id).catch(() => {}); photoCache.delete(id); });
+    Store.setNote(gid, v, popPhotos.map(p => p.id));
+    closeNote(); applyMarks(); renderNotes(); toast(v || popPhotos.length ? '메모를 저장했습니다' : '메모를 비웠습니다');
+  } catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
+  finally { btn.disabled = false; btn.textContent = '저장'; }
 });
 $('#np-del').addEventListener('click', () => { if (!popGid) return; Store.removeGroup(popGid); closeNote(); applyMarks(); renderNotes(); toast('표시를 지웠습니다'); });
 $('#np-close').addEventListener('click', closeNote);
@@ -386,7 +421,7 @@ $('#reader').addEventListener('click', e => {
   lastTap = { gid, t: now }; const rect = m.getBoundingClientRect();
   clearTimeout(tapT); tapT = setTimeout(() => openNote(gid, rect, false), 260);   // 한 번 누름 → 보기
 });
-document.addEventListener('pointerdown', e => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('mark.hl')) closeNote(); });
+document.addEventListener('pointerdown', e => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('mark.hl, #imged, #lightbox, #toast')) closeNote(); });
 $('#reader').addEventListener('scroll', () => { if (!pop.hidden && !pop.classList.contains('editing')) closeNote(); }, { passive: true });
 addEventListener('scroll', () => { if (!pop.hidden && !pop.classList.contains('editing')) closeNote(); }, { passive: true });
 $('#hl-del').addEventListener('click', () => { if (!editGid) return; Store.removeGroup(editGid); hideBar(); applyMarks(); renderNotes(); toast('표시를 지웠습니다'); });
@@ -410,18 +445,18 @@ function wrapOffsets(tx, s, e, cls, gid, title) {
 }
 function applyMarks() {
   const r = $('#reader'); unwrapAll(r);
-  const notes = {}; Store.marks().forEach(m => { if (m.note) notes[m.gid] = m.note; });
+  const notes = {}, photos = {}; Store.marks().forEach(m => { if (m.note) notes[m.gid] = m.note; if (m.photos && m.photos.length) photos[m.gid] = 1; });
   Store.marks().filter(m => m.lid === st.lid).forEach(m => {
     const tx = $(`[data-id="${m.block}"] .tx`, r); if (!tx) return;
     wrapOffsets(tx, m.s, m.e, `hl c-${m.c}${notes[m.gid] ? ' has-note' : ''}`, m.gid, notes[m.gid]);
   });
-  Object.keys(notes).forEach(g => { const ms = $$(`mark.hl[data-gid="${g}"]`, r); if (ms.length) ms[ms.length - 1].classList.add('note-end'); });
+  new Set([...Object.keys(notes), ...Object.keys(photos)]).forEach(g => { const ms = $$(`mark.hl[data-gid="${g}"]`, r); if (ms.length) { const last = ms[ms.length - 1]; last.classList.add('note-end'); if (photos[g]) last.classList.add('has-photo'); } });
 }
 
 /* ---------------- 내 노트 ---------------- */
 function renderNotes() {
   const groups = {}; Store.marks().forEach(m => { (groups[m.gid] = groups[m.gid] || []).push(m); });
-  const items = Object.values(groups).map(g => ({ kind: 'mark', lid: g[0].lid, block: g[0].block, c: g[0].c, quote: g.map(x => x.quote).join(' … '), note: g[0].note, at: g[0].at }));
+  const items = Object.values(groups).map(g => ({ kind: 'mark', lid: g[0].lid, block: g[0].block, c: g[0].c, quote: g.map(x => x.quote).join(' … '), note: g[0].note, ph: (g[0].photos || []).length, at: g[0].at }));
   Object.entries(Store.answers()).forEach(([id, a]) => items.push({ kind: 'ans', lid: id.slice(0, 3), block: id, note: a.t, at: a.at }));
   const byL = {}; items.forEach(i => (byL[i.lid] = byL[i.lid] || []).push(i));
   const order = st.index.lessons.map(l => l.id).filter(id => byL[id]);
@@ -432,7 +467,7 @@ function renderNotes() {
     const list = byL[lid].sort((a, b) => a.block < b.block ? -1 : a.block > b.block ? 1 : a.at - b.at);
     return `<div class="ngroup">${lessonNo(L) ? L.no + '과 ' : ''}${esc(L.title)} · ${list.length}</div>` + list.map(i => i.kind === 'ans'
       ? `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}"><span class="kind">내 답</span><br>${esc(i.note.slice(0, 120))}</button>`
-      : `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}"><q class="c-${i.c}">${esc(i.quote.length > 70 ? i.quote.slice(0, 70) + '…' : i.quote)}</q>${i.note ? esc(i.note) : ''}</button>`).join('');
+      : `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}"><q class="c-${i.c}">${esc(i.quote.length > 70 ? i.quote.slice(0, 70) + '…' : i.quote)}</q>${i.note ? esc(i.note) : ''}${i.ph ? ` <span class="kind">📷 ${i.ph}</span>` : ''}</button>`).join('');
   }).join('')}</div>`;
 }
 $('#notes').addEventListener('click', e => { const b = e.target.closest('[data-jump]'); if (!b) return; closeSheets(); openLesson(b.dataset.lid, 0, b.dataset.jump); });
@@ -469,7 +504,7 @@ $('#att-form').addEventListener('submit', async e => {
   if (attKind === 'link') { a.url = $('#att-url').value.trim(); if (!/^https?:\/\//.test(a.url)) { toast('https:// 로 시작하는 주소를 넣어 주세요'); return; } }
   if (attKind === 'image') {
     const file = $('#att-file').files[0]; if (!file) { toast('사진 파일을 골라 주세요'); return; }
-    try { a.img = await compressImage(file); } catch (err) { toast('사진이 너무 크거나 읽을 수 없습니다'); return; }
+    const r = await editImage(file).catch(() => null); if (!r) { toast('사진 넣기를 취소했습니다'); return; } a.img = r.dataUrl;
   }
   const btn = $('#att-form .primary'); btn.disabled = true;
   try { await Store.addAtt(a); $('#modal').hidden = true; refreshAtts(); toast('자료를 추가했습니다'); }
