@@ -31,9 +31,21 @@ async function FirebaseBackend(config) {
       A.onAuthStateChanged(auth, async fu => {
         user = fu;
         if (!fu) return cb({ state: 'out' });
-        let role = null;
+        let role = null, reason = 'none';
         try { const m = await F.getDoc(d('members', fu.uid)); role = m.exists() ? m.data().role : null; } catch (e) { role = null; }
-        cb({ state: role ? 'in' : 'nomember', uid: fu.uid, name: fu.displayName || fu.email, email: fu.email, role });
+        // 아직 회원이 아니면: 관리자가 등록해 둔 초대(구글 메일)가 있는지 확인하고 자동 가입
+        if (!role && fu.email) {
+          try {
+            const key = fu.email.toLowerCase(); const inv = await F.getDoc(d('invites', key));
+            if (inv.exists() && inv.data().active) {
+              const r = inv.data().role || 'member';
+              await F.setDoc(d('members', fu.uid), { role: r, email: key, name: inv.data().name || fu.displayName || key, joinedAt: Date.now(), via: 'invite' });
+              await F.updateDoc(d('invites', key), { uid: fu.uid, joinedAt: Date.now() }).catch(() => {});
+              role = r;
+            } else if (inv.exists()) reason = 'stopped';
+          } catch (e) { console.warn('invite', e); }
+        }
+        cb({ state: role ? 'in' : 'nomember', reason, uid: fu.uid, name: fu.displayName || fu.email, email: fu.email, role });
       });
       A.getRedirectResult(auth).catch(() => {});
     },
@@ -98,6 +110,18 @@ async function FirebaseBackend(config) {
     async getPhoto(id) { const s = await F.getDoc(d_('users', u(), 'photos', id)); return s.exists() ? s.data().img : null; },
     deletePhoto: id => F.deleteDoc(d_('users', u(), 'photos', id)),
 
+    // 관리자: 사용자 관리 (구글 메일 초대)
+    async listPeople() {
+      const [iv, mb] = await Promise.all([F.getDocs(F.collection(db, 'invites')), F.getDocs(F.collection(db, 'members'))]);
+      const invites = [], members = [];
+      iv.forEach(x => invites.push({ ...x.data(), id: x.id })); mb.forEach(x => members.push({ ...x.data(), uid: x.id }));
+      return { invites, members, me: u() };
+    },
+    saveInvite: (email, data) => F.setDoc(d('invites', email.toLowerCase()), data, { merge: true }),
+    deleteInvite: email => F.deleteDoc(d('invites', email.toLowerCase())),
+    setMemberRole: (uid, role) => F.updateDoc(d('members', uid), { role }),
+    removeMember: uid => F.deleteDoc(d('members', uid)),
+
     // 관리자: 교재 올리기
     putIndex: obj => F.setDoc(d('lessons', '_index'), { json: JSON.stringify(obj), at: Date.now() }),
     putLesson: (lid, obj) => F.setDoc(d('lessons', lid), { json: JSON.stringify(obj), at: Date.now() }),
@@ -136,6 +160,10 @@ function LocalBackend() {
     listAtts: async lid => Object.values(db.atts).filter(a => a.lid === lid).sort((a, b) => a.at - b.at),
     addAtt: a => { db.atts[a.id] = { ...a, author: 'local' }; return save(); },
     removeAtt: a => { delete db.atts[a.id]; return save(); },
+    async listPeople() { return { invites: Object.values(db.invites || {}), members: [{ uid: 'local', role: 'admin', name: '이 기기', email: 'me@example.com' }], me: 'local' }; },
+    saveInvite: (email, data) => { db.invites = db.invites || {}; const k = email.toLowerCase(); db.invites[k] = { ...(db.invites[k] || {}), ...data, id: k }; return save(); },
+    deleteInvite: email => { if (db.invites) delete db.invites[email.toLowerCase()]; return save(); },
+    setMemberRole: async () => {}, removeMember: async () => {},
     putIndex: async () => { throw new Error('로컬 시험 모드에서는 교재를 올릴 수 없습니다'); },
     putLesson: async () => { throw new Error('로컬 시험 모드에서는 교재를 올릴 수 없습니다'); },
     putPage: async () => { throw new Error('로컬 시험 모드에서는 교재를 올릴 수 없습니다'); }

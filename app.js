@@ -750,12 +750,99 @@ async function syncNow(force) {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
 addEventListener('focus', () => syncNow());
 
+
+/* ---------------- 관리자: 사용자 관리 (구글 메일 초대) ---------------- */
+const ROLE_KO = { admin: '관리자', teacher: '강사', member: '훈련생' };
+let ppData = { invites: [], members: [], me: null }, ppFilter = 'all', ppEdit = null, ppConfirm = null;
+const fmtD = t => t ? new Date(t).toLocaleDateString('ko-KR', { year: '2-digit', month: 'numeric', day: 'numeric' }) : '';
+function peopleRows() {
+  const rows = new Map();
+  ppData.invites.forEach(iv => rows.set(iv.id, { email: iv.id, name: iv.name || '', role: iv.role || 'member', memo: iv.memo || '', active: iv.active !== false, invite: iv, member: null }));
+  ppData.members.forEach(m => {
+    const key = (m.email || '').toLowerCase() || 'uid:' + m.uid;
+    const r = rows.get(key) || { email: m.email || '', name: m.name || '', role: m.role, memo: '', active: true, invite: null, member: null };
+    r.member = m; r.role = m.role || r.role; if (!r.name) r.name = m.name || ''; rows.set(key, r);
+  });
+  return [...rows.values()].map(r => ({ ...r, status: !r.active ? 'off' : r.member ? 'on' : 'wait', me: r.member && r.member.uid === ppData.me }))
+    .sort((a, b) => ({ on: 0, wait: 1, off: 2 }[a.status] - { on: 0, wait: 1, off: 2 }[b.status]) || (a.name || a.email).localeCompare(b.name || b.email, 'ko'));
+}
+function renderPeople() {
+  const q = $('#pp-q').value.trim().toLowerCase();
+  const rows = peopleRows().filter(r => (ppFilter === 'all' || r.status === ppFilter) && (!q || [r.name, r.email, r.memo].join(' ').toLowerCase().includes(q)));
+  const STAT = { on: ['사용 중', 'on'], wait: ['가입 전', 'wait'], off: ['중지', 'off'] };
+  $('#pp-list').innerHTML = rows.map(r => {
+    const key = esc(r.email || 'uid:' + (r.member && r.member.uid));
+    if (ppEdit === key) return `<li class="pp-item editing" data-k="${key}">
+      <div class="pp-edit"><label>이름<input class="pe-name" value="${esc(r.name)}"></label>
+      <label>역할<select class="pe-role">${Object.entries(ROLE_KO).map(([k, v]) => `<option value="${k}" ${k === r.role ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      <label class="full">메모<textarea class="pe-memo" rows="2">${esc(r.memo)}</textarea></label></div>
+      <div class="pp-btns"><button type="button" class="ghost" data-act="cancel">취소</button><button type="button" class="primary" data-act="save">저장</button></div></li>`;
+    const conf = ppConfirm === key;
+    return `<li class="pp-item ${r.status}" data-k="${key}">
+      <div class="pp-main"><b>${esc(r.name || r.email || '(이름 없음)')}</b>${r.me ? '<span class="pp-me">나</span>' : ''}
+        <span class="pp-role r-${r.role}">${ROLE_KO[r.role] || r.role}</span><span class="pp-stat s-${STAT[r.status][1]}">${STAT[r.status][0]}</span></div>
+      <div class="pp-sub">${esc(r.email || '메일 정보 없음(직접 등록)')}${r.invite && r.invite.createdAt ? ` · 등록 ${fmtD(r.invite.createdAt)}` : ''}${r.member && r.member.joinedAt ? ` · 가입 ${fmtD(r.member.joinedAt)}` : ''}${r.invite && r.invite.stoppedAt && r.status === 'off' ? ` · 중지 ${fmtD(r.invite.stoppedAt)}` : ''}</div>
+      ${r.memo ? `<p class="pp-memo">${esc(r.memo)}</p>` : ''}
+      <div class="pp-btns">
+        <button type="button" class="ghost" data-act="edit">수정</button>
+        ${r.me ? '' : r.status === 'off'
+          ? `<button type="button" class="ghost" data-act="on">다시 허용</button><button type="button" class="ghost danger" data-act="${conf ? 'del!' : 'del'}">${conf ? '정말 기록 삭제' : '기록 삭제'}</button>`
+          : `<button type="button" class="ghost danger" data-act="${conf ? 'off!' : 'off'}">${conf ? '정말 중지할까요?' : '사용 중지'}</button>`}
+      </div></li>`;
+  }).join('') || '<li class="empty">해당하는 사람이 없습니다.</li>';
+}
+async function loadPeople() {
+  $('#pp-list').innerHTML = '<li class="empty">불러오는 중…</li>';
+  try { ppData = await B.listPeople(); renderPeople(); } catch (e) { $('#pp-list').innerHTML = `<li class="empty">불러오지 못했습니다: ${esc(e.code || e.message)}</li>`; }
+}
+$('#btn-people').addEventListener('click', () => { closeSheets(); $('#people').hidden = false; ppEdit = null; ppConfirm = null; loadPeople(); });
+$('#pp-close').addEventListener('click', () => $('#people').hidden = true);
+$('#pp-q').addEventListener('input', renderPeople);
+$('#pp-filter').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (!b) return; ppFilter = b.dataset.f; $$('#pp-filter button').forEach(x => x.classList.toggle('on', x === b)); renderPeople(); });
+$('#pp-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const email = $('#pp-email').value.trim().toLowerCase(); if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { $('#pp-msg').textContent = '메일 주소를 확인해 주세요'; return; }
+  const btn = $('#pp-submit'); btn.disabled = true;
+  try {
+    const exists = ppData.invites.find(x => x.id === email);
+    await B.saveInvite(email, { email, name: $('#pp-name').value.trim(), role: $('#pp-role').value, memo: $('#pp-memo').value.trim(), active: true,
+      ...(exists ? { updatedAt: Date.now() } : { createdAt: Date.now(), createdBy: st.me && st.me.email || '' }) });
+    $('#pp-form').reset(); $('#pp-msg').textContent = ''; toast(`${email} 을(를) 등록했습니다`); await loadPeople();
+  } catch (err) { $('#pp-msg').textContent = '등록하지 못했습니다: ' + (err.code || err.message); }
+  finally { btn.disabled = false; }
+});
+$('#pp-list').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if (!b) return; const li = b.closest('[data-k]'); const key = li.dataset.k;
+  const r = peopleRows().find(x => (x.email || 'uid:' + (x.member && x.member.uid)) === key); if (!r) return;
+  const act = b.dataset.act;
+  try {
+    if (act === 'edit') { ppEdit = key; ppConfirm = null; return renderPeople(); }
+    if (act === 'cancel') { ppEdit = null; return renderPeople(); }
+    if (act === 'off' || act === 'del') { ppConfirm = key; renderPeople(); setTimeout(() => { if (ppConfirm === key) { ppConfirm = null; renderPeople(); } }, 4000); return; }
+    b.disabled = true;
+    if (act === 'save') {
+      const name = $('.pe-name', li).value.trim(), role = $('.pe-role', li).value, memo = $('.pe-memo', li).value.trim();
+      if (r.email) await B.saveInvite(r.email, { email: r.email, name, role, memo, active: r.active, updatedAt: Date.now() });
+      if (r.member && r.member.role !== role) await B.setMemberRole(r.member.uid, role);
+      ppEdit = null; toast('저장했습니다');
+    }
+    if (act === 'off!') {
+      if (r.email) await B.saveInvite(r.email, { email: r.email, name: r.name, role: r.role, memo: r.memo, active: false, stoppedAt: Date.now() });
+      if (r.member) await B.removeMember(r.member.uid);
+      ppConfirm = null; toast(`${r.name || r.email} 사용을 중지했습니다`);
+    }
+    if (act === 'on') { await B.saveInvite(r.email, { active: true, restartedAt: Date.now() }); toast('다시 허용했습니다. 그 메일로 로그인하면 들어옵니다'); }
+    if (act === 'del!') { await B.deleteInvite(r.email); ppConfirm = null; toast('기록을 삭제했습니다'); }
+    await loadPeople();
+  } catch (err) { toast('처리하지 못했습니다: ' + (err.code || err.message)); b.disabled = false; }
+});
+
 /* ---------------- 시작: 로그인 → 권한 확인 → 교재 ---------------- */
 const firstReady = () => { const x = st.index.lessons.find(l => l.ready && l.no >= 1) || st.index.lessons.find(l => l.ready); return x ? x.id : null; };
 function gate(state, info = {}) {
   const g = $('#gate'); g.hidden = state === 'none';
   $$('[data-g]', g).forEach(x => x.hidden = x.dataset.g !== state);
-  if (state === 'nomember') { $('#g-name').textContent = info.name || ''; $('#g-uid').textContent = info.uid || ''; }
+  if (state === 'nomember') { $('#g-name').textContent = info.name || ''; $('#g-uid').textContent = info.uid || ''; $('#g-email').textContent = info.email || ''; $('#g-why').textContent = info.reason === 'stopped' ? '사용이 중지된 계정입니다.' : '아직 등록되지 않았습니다.'; }
   if (state === 'error') $('#g-err').textContent = info.msg || '';
 }
 $('#btn-login').addEventListener('click', async () => {
@@ -764,7 +851,7 @@ $('#btn-login').addEventListener('click', async () => {
   finally { $('#btn-login').disabled = false; }
 });
 $('#btn-copy-uid').addEventListener('click', () => {
-  const t = $('#g-uid').textContent;
+  const t = $('#g-email').textContent || $('#g-uid').textContent;
   (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('UID를 복사했습니다'), () => { const r = document.createRange(); r.selectNodeContents($('#g-uid')); getSelection().removeAllRanges(); getSelection().addRange(r); toast('선택된 UID를 복사하세요'); });
 });
 [$('#btn-logout'), $('#btn-logout2')].forEach(b => b.addEventListener('click', async () => { await B.signOut(); location.reload(); }));
@@ -776,6 +863,8 @@ async function enterApp(info) {
   setFs(Store.pref('fs', 17)); setPenColor(Store.pref('pen', 'y'));
   $('#acct-name').textContent = info.name + (info.role === 'admin' ? ' · 관리자' : info.role === 'teacher' ? ' · 강사' : '');
   $('#btn-admin').hidden = !(info.role === 'admin' && B.kind === 'firebase');
+  $('#btn-people').hidden = info.role !== 'admin';
+  document.body.dataset.role = info.role || 'member'; st.me = info;
   $('#btn-logout').hidden = B.kind !== 'firebase';
   await loadIndex();
   await loadBooks().catch(() => {});

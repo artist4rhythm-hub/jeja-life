@@ -43,6 +43,7 @@
     <div class="acct">
       <span id="acct-name"></span>
       <span class="grow"></span>
+      <button type="button" class="acct-btn" id="btn-people" hidden>사용자 관리</button>
       <button type="button" class="acct-btn" id="btn-admin" hidden>교재 올리기</button>
       <button type="button" class="acct-btn" id="btn-logout" hidden>로그아웃</button>
     </div>
@@ -162,6 +163,25 @@
   </div>
 </div>
 
+<div id="people" class="modal" hidden>
+  <div class="modal-box wide pp-box" role="dialog" aria-label="사용자 관리">
+    <div class="pp-head"><h3>사용자 관리</h3><button type="button" class="icon-btn" id="pp-close" aria-label="닫기">✕</button></div>
+    <form id="pp-form" class="pp-form" autocomplete="off">
+      <label>구글 메일<input id="pp-email" type="email" required placeholder="name@gmail.com"></label>
+      <label>이름<input id="pp-name" type="text" placeholder="홍길동"></label>
+      <label>역할<select id="pp-role"><option value="teacher">강사</option><option value="member">훈련생</option><option value="admin">관리자</option></select></label>
+      <label class="full">메모 <span class="muted">(관리자만 봄)</span><textarea id="pp-memo" rows="2" placeholder="예: 2026 가을학기 강사, 3반 담당"></textarea></label>
+      <div class="full pp-act"><span class="muted" id="pp-msg"></span><button type="submit" class="primary" id="pp-submit">등록</button></div>
+    </form>
+    <div class="pp-tools">
+      <div class="seg" id="pp-filter"><button type="button" data-f="all" class="on">전체</button><button type="button" data-f="on">사용 중</button><button type="button" data-f="wait">가입 전</button><button type="button" data-f="off">중지</button></div>
+      <input id="pp-q" type="search" placeholder="이름·메일·메모 찾기">
+    </div>
+    <ul class="pp-list" id="pp-list"></ul>
+    <p class="muted small">등록한 사람이 이 앱 주소에서 <b>그 구글 메일로 로그인</b>하면 바로 들어옵니다. [사용 중지]를 누르면 그 즉시 못 들어오고, 이름·메모 기록은 남습니다.</p>
+  </div>
+</div>
+
 <div id="gate" class="gate">
   <div class="gate-box">
     <div class="gate-logo">제자의 삶</div>
@@ -172,9 +192,10 @@
       <p class="muted small">등록된 사람만 교재를 볼 수 있습니다.</p>
     </div>
     <div data-g="nomember" hidden>
-      <p><b id="g-name"></b> 님은 아직 등록되지 않았습니다.</p>
-      <p class="muted small">관리자에게 아래 UID를 보내 등록을 요청하세요.</p>
-      <code id="g-uid"></code>
+      <p><b id="g-name"></b> 님은 <span id="g-why">아직 등록되지 않았습니다.</span></p>
+      <p class="muted small">관리자에게 아래 <b>구글 메일 주소</b>로 등록을 요청하세요. 등록되면 다시 로그인만 하면 됩니다.</p>
+      <code id="g-email"></code>
+      <p class="muted small">관리자 참고용 UID: <span id="g-uid"></span></p>
       <div class="gate-act"><button type="button" class="primary" id="btn-copy-uid">UID 복사</button><button type="button" class="ghost" id="btn-logout2">다른 계정으로 로그인</button></div>
     </div>
     <div data-g="error" hidden><p id="g-err"></p><button type="button" class="ghost" onclick="location.reload()">새로고침</button></div>

@@ -401,3 +401,38 @@ mark.hl.note-end.has-photo::after{content:"✎ 📷"}
 .vref{color:var(--brand);text-decoration:underline dotted;text-underline-offset:3px;cursor:pointer}
 .bk .ref.vref{text-decoration:none}
 @media (max-width:759px){ #tabbar{grid-template-columns:repeat(5,1fr)!important} #panel > section#bible{padding-bottom:calc(var(--tab-h) + 8px)} .bb-ext{top:128px} }
+
+/* v0.10 사용자 관리 */
+.pp-box{width:min(720px,100%);max-height:calc(100% - 24px);overflow:auto;gap:12px}
+.pp-head{display:flex;align-items:center;justify-content:space-between}
+.pp-form{display:grid;grid-template-columns:1.4fr 1fr 110px;gap:8px 10px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px}
+.pp-form .full{grid-column:1/-1}
+.pp-form input,.pp-form select,.pp-form textarea,.pp-edit input,.pp-edit select,.pp-edit textarea{border:1px solid var(--line);border-radius:8px;padding:7px 9px;background:var(--surface);font:inherit;font-size:14px;color:var(--ink);width:100%}
+.pp-act{display:flex;align-items:center;justify-content:flex-end;gap:10px;font-size:12px}
+.pp-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pp-tools .seg{flex:0 0 auto}.pp-tools .seg button{padding:5px 12px;white-space:nowrap}
+.pp-tools input{flex:1;min-width:140px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--surface);font-size:14px}
+.pp-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.pp-item{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--surface);display:grid;gap:4px}
+.pp-item.off{opacity:.7;background:var(--bg)}
+.pp-main{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pp-main b{font-size:15px}
+.pp-me{font-size:10px;border:1px solid var(--brand);color:var(--brand);border-radius:99px;padding:0 6px}
+.pp-role,.pp-stat{font-size:11px;border-radius:99px;padding:1px 8px;font-weight:700}
+.pp-role{background:var(--brand-soft);color:var(--brand)}
+.pp-role.r-admin{background:var(--brand);color:var(--on-brand)}
+.s-on{background:#d9f2e2;color:#1b6b3d}.s-wait{background:var(--supp);color:#8a6512}.s-off{background:#f3dada;color:#9b2c2c}
+.pp-sub{font-size:12px;color:var(--muted)}
+.pp-memo{margin:2px 0 0;font-size:13px;white-space:pre-wrap;background:var(--bg);border-radius:8px;padding:6px 9px}
+.pp-btns{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.pp-btns .ghost,.pp-btns .primary{padding:4px 12px;font-size:12px}
+.ghost.danger{color:var(--ul);border-color:var(--ul)}
+.pp-edit{display:grid;grid-template-columns:1fr 120px;gap:8px}
+.pp-edit label{display:grid;gap:3px;font-size:12px}
+.pp-edit .full{grid-column:1/-1}
+.pp-list .empty{list-style:none;color:var(--muted);font-size:13px;padding:8px}
+.small{font-size:12px}
+#btn-people{border-color:var(--brand);color:var(--brand)}
+/* 훈련생: 공유 자료 추가 버튼 숨김 (규칙에서도 막음) */
+body[data-role="member"] [data-add]{display:none!important}
+@media (max-width:600px){.pp-form{grid-template-columns:1fr}.pp-edit{grid-template-columns:1fr}}
