@@ -200,6 +200,9 @@ mark.find{background:var(--hl-y);color:var(--hl-ink);outline:2px solid var(--sup
 
 /* ===== 폰: 묵상형(C) ===== */
 @media (max-width:759px){
+  /* 폰: 화면 높이를 고정하지 않아야 위쪽 제목줄이 끝까지 붙어 있음 (고정하면 한 화면 넘게 내리면 제목줄이 밀려 올라감) */
+  html,body{height:auto;min-height:100%}
+  .top{position:sticky;top:0}
   .only-mob{display:flex!important}
   .fs,#btn-panel{display:none!important}
   .brand{flex-direction:column;gap:0}
@@ -226,7 +229,7 @@ mark.find{background:var(--hl-y);color:var(--hl-ink);outline:2px solid var(--sup
   .unit + .unit{border:0;margin:0}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:4px 16px 12px;margin-bottom:12px}
   .pgmark{right:-10px}
-  .pager{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px;font-family:var(--sans)}
+  .pager{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px;margin-bottom:64px;font-family:var(--sans)}
   .pager button{border:1px solid var(--line);border-radius:12px;padding:10px 12px;text-align:left;font-size:13px;background:var(--surface);min-width:0}
   .pager button small{display:block;color:var(--muted);font-size:11px}
   .pager button span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
