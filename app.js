@@ -61,7 +61,7 @@ const uidGen = p => p + Date.now().toString(36) + Math.random().toString(36).sli
 const mq = matchMedia('(max-width:759px)');
 const isMob = () => mq.matches;
 // 쪽 이름: 제자의 삶 = "12", "i1" / 새 교재 = 책코드_쪽 ("cs_3", "ct_i2")
-const pageLabel = p => { const v = String(p).replace(/^[a-z]+_/, ''); return /^i\d/.test(v) ? `안내 ${v.slice(1)}쪽` : `${v}쪽`; };
+const pageLabel = p => { const v = String(p).replace(/^[a-z][a-z0-9]*_/, ''); return /^i\d/.test(v) ? `안내 ${v.slice(1)}쪽` : `${v}쪽`; };
 const lessonNo = L => (L.no >= 1 && L.no <= 12) ? String(L.no) : '';
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 1800); }
 
@@ -72,16 +72,25 @@ const st = { library: [], indexes: {}, book: null, index: null, lessons: {}, lid
 /* ---------------- 서재 (여러 교재) ----------------
  * lessons/_library 에 교재 목록, 교재마다 목차 문서(제자의 삶 = _index, 새 교재 = _index_<책코드>).
  * 과 ID 앞글자로 어느 교재인지 압니다 (L = 제자의 삶, S = 창조주를 소개합니다, T = 교사 매뉴얼 …). */
-const JEJA = { id: 'jeja', title: '제자의 삶', short: '제자의 삶', sub: '예수님을 사랑함으로 좇아가는 삶', tag: '훈련 시리즈 2', prefix: 'L', color: 'green', access: 'all', group: '제자 훈련', order: 1, indexDoc: '_index' };
+const JEJA = { id: 'jeja', title: '제자의 삶', short: '제자의 삶', sub: '예수님을 사랑함으로 좇아가는 삶', tag: '훈련 시리즈 2', prefix: 'L', color: 'green', access: 'all', group: '제자 훈련', order: 1, indexDoc: '_index', series: 'jeja', edition: '2024년 8월판' };
 const isStaff = () => st.me && (st.me.role === 'admin' || st.me.role === 'teacher');
 const canSee = b => b && (b.access !== 'staff' || isStaff());
 const bookById = id => st.library.find(b => b.id === id);
 const bookOfLid = lid => st.library.find(b => lid && lid[0] === b.prefix) || null;
 const posKey = id => id === 'jeja' ? 'pos' : 'pos_' + id;
 const curBook = () => bookById(st.book) || JEJA;
+/* 판(버전): 같은 교재(series)의 여러 판. 각 판은 서재 목록의 한 항목이고, 판마다 형광펜·메모가 따로 저장됨 */
+const seriesOf = b => b.series || b.id;
+const editionsOf = sr => st.library.filter(b => seriesOf(b) === sr && canSee(b)).sort((a, b) => String(b.edition || '').localeCompare(String(a.edition || ''), 'ko', { numeric: true }));
+function chosenEdition(sr) {
+  const eds = editionsOf(sr); if (!eds.length) return null;
+  return eds.find(b => b.id === Store.pref('ed_' + sr, '')) || eds.find(b => b.seriesDefault) || eds[0];
+}
+const bookLabel = b => b ? (b.title + (b.edition ? ' · ' + b.edition : '')) : '';
 async function loadLibrary() {
   let lib = await B.getLibrary(); lib = Array.isArray(lib) ? lib : [];
   if (!lib.some(b => b.id === 'jeja')) lib.unshift({ ...JEJA });
+  lib = lib.map(b => b.id === 'jeja' ? { ...JEJA, ...b, series: b.series || 'jeja', edition: b.edition || JEJA.edition } : b);
   st.library = lib.sort((a, b) => (a.order || 99) - (b.order || 99));
   return st.library;
 }
@@ -112,7 +121,7 @@ function renderToc() {
       `<li><button type="button" data-unit="${i}" class="${(isMob() ? i === st.ui : u.id === st.visibleUnit) ? 'on' : ''} ${done[u.id] ? 'done' : ''}" title="${esc(plain(u.title))}">${esc(plain(u.title).length > 38 ? plain(u.title).slice(0, 36) + '…' : plain(u.title))}</button></li>`).join('')}</ol>` : '';
     return `<li class="${x.ready ? '' : 'off'} ${on ? 'cur' : ''}"><button type="button" data-lesson="${x.id}" ${x.ready ? '' : 'aria-disabled="true"'}>
       <span class="no">${lessonNo(x)}</span><span>${esc(x.title)}</span>
-      <span class="pg">${x.ready ? (/^(?:[a-z]+_)?i/.test(x.pageFrom) ? '' : pageLabel(x.pageFrom)) : '준비 중'}</span></button>${units}</li>`;
+      <span class="pg">${x.ready ? (/^(?:[a-z][a-z0-9]*_)?i/.test(x.pageFrom) ? '' : pageLabel(x.pageFrom)) : '준비 중'}</span></button>${units}</li>`;
   }).join('');
 }
 $('#toc').addEventListener('click', e => {
@@ -639,7 +648,7 @@ async function search(q) {
   if (!q) { res.hidden = true; toc.hidden = false; return; }
   let ready;
   if (st.scope === 'books') {
-    const vis = st.library.filter(canSee); await Promise.all(vis.map(b => loadBookIndex(b.id).catch(() => null)));
+    const vis = st.library.filter(canSee).filter(b => b.id === st.book || b.role === 'teacher' || !b.series || (chosenEdition(b.series) || {}).id === b.id); await Promise.all(vis.map(b => loadBookIndex(b.id).catch(() => null)));
     ready = vis.flatMap(b => ((st.indexes[b.id] || {}).lessons || []).filter(l => l.ready).map(l => ({ ...l, book: b })));
   } else ready = st.index.lessons.filter(l => l.ready).map(l => ({ ...l, book: curBook() }));
   await Promise.all(ready.map(l => loadLesson(l.id)));
@@ -702,9 +711,9 @@ mq.addEventListener('change', () => { if (!cur()) return; closeSheets(); setOrig
 let uplItems = [];
 function classify(f) {
   const n = f.name;
-  let m = n.match(/^index(?:_([a-z]+))?\.json$/); if (m) return { kind: 'index', book: m[1] || null, label: '목차' + (m[1] ? ' · ' + m[1] : ''), order: 3 };
+  let m = n.match(/^index(?:_([a-z][a-z0-9]*))?\.json$/); if (m) return { kind: 'index', book: m[1] || null, label: '목차' + (m[1] ? ' · ' + m[1] : ''), order: 3 };
   m = n.match(/^([A-Z]\d\d)\.json$/); if (m) return { kind: 'lesson', lid: m[1], label: '본문 ' + m[1], order: 2 };
-  m = n.match(/^p(.+)\.webp$/); if (m) return { kind: 'page', page: m[1], label: '원본 ' + (m[1].match(/^([a-z]+)_/) || ['', ''])[1] + ' ' + pageLabel(m[1]), order: 1 };
+  m = n.match(/^p(.+)\.webp$/); if (m) return { kind: 'page', page: m[1], label: '원본 ' + (m[1].match(/^([a-z][a-z0-9]*)_/) || ['', ''])[1] + ' ' + pageLabel(m[1]), order: 1 };
   return null;
 }
 async function entriesToFiles(entry) {
@@ -742,7 +751,7 @@ async function runUpload() {
       title: m.title || ex.title || (o && o.book) || id }; };
   const bookOfPrefix = c => { const ix = Object.values(indexIn).find(o => o.meta && o.meta.prefix === c); return ix ? ix.meta.id : ((st.library.find(b => b.prefix === c) || {}).id || 'jeja'); };
   const lidBook = lid => (lessonsIn[lid] && lessonsIn[lid].book) || bookOfPrefix(lid[0]);
-  const pageBook = p => { const m = String(p).match(/^([a-z]+)_/); return m ? m[1] : 'jeja'; };
+  const pageBook = p => { const m = String(p).match(/^([a-z][a-z0-9]*)_/); return m ? m[1] : 'jeja'; };
   const pageLid = {}; Object.values(lessonsIn).forEach(L => (L.pages || []).forEach(p => pageLid[p] = L.id));
   const todo = uplItems.filter(x => x.status !== '완료' && !x.status.startsWith('실패'));
   const one = async x => {
@@ -764,7 +773,9 @@ async function runUpload() {
   // 2) 서재 목록에 교재 등록(이미 있으면 정보만 새로)
   const ids = Object.keys(indexIn);
   if (ids.length) {
-    ids.forEach(id => { const m = metaOf(id); const i = st.library.findIndex(b => b.id === id); const entry = { ...(i >= 0 ? st.library[i] : {}), ...m }; delete entry.lessons; if (i >= 0) st.library[i] = entry; else st.library.push(entry); });
+    ids.forEach(id => { const m = metaOf(id); const i = st.library.findIndex(b => b.id === id); const entry = { ...(i >= 0 ? st.library[i] : {}), ...m }; delete entry.lessons;
+      if (i < 0 && entry.seriesDefault) st.library.forEach(b => { if (seriesOf(b) === seriesOf(entry)) b.seriesDefault = false; });   // 새 판을 처음 올리면 그 판이 기본판
+      if (i >= 0) st.library[i] = entry; else st.library.push(entry); });
     try { await B.putLibrary(st.library); } catch (e) { toast('서재 목록을 저장하지 못했습니다: ' + (e.code || e.message)); return; }
   }
   toast('교재를 올렸습니다'); st.lessons = {}; st.indexes = {}; await loadLibrary();
@@ -997,31 +1008,123 @@ function resumeOf(id) {
 function coverHTML(b, small) {
   return `<div class="cover cv-${esc(b.color || 'green')}${small ? ' sm' : ''}" aria-hidden="true"><small>${esc(b.tag || '')}</small><b>${esc(b.coverTitle || b.title)}</b><span>수원하나교회</span></div>`;
 }
+function hasMarksIn(b) {
+  if (!b || !b.prefix) return false;
+  return Store.marks().some(m => m.lid && m.lid[0] === b.prefix) || Object.keys(Store.answers()).some(id => id[0] === b.prefix);
+}
 function renderLibrary() {
   const vis = st.library.filter(canSee);
   const teacherOf = {};
   vis.forEach(b => { if (b.role === 'teacher' && b.pair && vis.some(x => x.id === b.pair)) teacherOf[b.pair] = b; });
-  const shown = vis.filter(b => !(b.role === 'teacher' && teacherOf[b.pair] === b));
+  // 같은 교재의 여러 판은 카드 하나로: 내가 고른 판(없으면 기본판)만 보임
+  const shown = vis.filter(b => !(b.role === 'teacher' && teacherOf[b.pair] === b)).filter(b => !b.series || (chosenEdition(b.series) || {}).id === b.id);
   const groups = []; shown.forEach(b => { const g = b.group || '교재'; let G = groups.find(x => x.name === g); if (!G) groups.push(G = { name: g, books: [] }); G.books.push(b); });
   const admin = isAdmin() && B.kind === 'firebase';
-  const accSel = b => admin ? `<label class="lb-acc">${esc(b.short || b.title)} 공개 대상
+  const accSel = b => admin ? `<label class="lb-acc">${esc((b.short || b.title) + (b.edition ? ' ' + b.edition : ''))} 공개 대상
       <select data-acc="${b.id}"><option value="all" ${b.access !== 'staff' ? 'selected' : ''}>모든 사용자</option><option value="staff" ${b.access === 'staff' ? 'selected' : ''}>강사·관리자만</option></select></label>` : '';
   const last = bookById(Store.pref('lastBook', '')); const lr = last && canSee(last) && resumeOf(last.id);
   $('#lib-body').innerHTML = (lr ? `<button type="button" class="lb-resume" data-open="${last.id}" data-resume="1">
-        ${coverHTML(last, true)}<span class="lb-rt"><small>이어 읽기</small><b>${esc(last.short || last.title)}</b><span>${esc(lr.text)}</span></span><span class="lb-go" aria-hidden="true">›</span></button>` : '') +
+        ${coverHTML(last, true)}<span class="lb-rt"><small>이어 읽기${last.edition ? ' · ' + esc(last.edition) : ''}</small><b>${esc(last.short || last.title)}</b><span>${esc(lr.text)}</span></span><span class="lb-go" aria-hidden="true">›</span></button>` : '') +
     groups.map(G => `<section class="lb-group"><h2>${esc(G.name)}</h2>${G.books.map(b => {
       const t = teacherOf[b.id]; const sx = bookStats(b.id); const r = resumeOf(b.id); const ready = !!st.indexes[b.id];
+      const eds = b.series ? editionsOf(b.series) : [b];
+      const edSel = eds.length > 1 ? `<label class="lb-ed">판 <select data-ed="${esc(b.series)}">${eds.map(e => `<option value="${e.id}" ${e.id === b.id ? 'selected' : ''}>${esc(e.edition || e.id)}${e.seriesDefault ? ' (기본)' : ''}</option>`).join('')}</select></label>`
+        : (b.edition ? `<span class="lb-ed one">${esc(b.edition)}</span>` : '');
+      const older = eds.filter(e => e.id !== b.id && hasMarksIn(e) && !Store.pref('imp_' + b.id + '_' + e.id, 0));
+      const imp = older.map(e => `<button type="button" class="lb-imp" data-imp-from="${e.id}" data-imp-to="${b.id}">↪ ${esc(e.edition || e.title)}의 내 형광펜·메모·답을 이 판으로 가져오기</button>`).join('');
+      const edAdmin = admin && eds.length > 1 ? eds.map(e => `<div class="lb-edrow"><b>${esc(e.edition || e.id)}</b>${e.seriesDefault ? '<span class="lb-def">기본판</span>' : `<button type="button" class="ghost" data-def="${e.id}">기본판으로</button>`}<button type="button" class="ghost" data-edname="${e.id}">판 이름</button>${accSel(e)}</div>`).join('')
+        : (admin ? accSel(b) + (b.series ? `<button type="button" class="ghost" data-edname="${b.id}">판 이름</button>` : '') : '');
       return `<article class="lb-card">
         <button type="button" class="lb-main" data-open="${b.id}" ${ready ? '' : 'disabled'}>${coverHTML(b)}
           <span class="lb-info"><b>${esc(b.title)}</b><span class="muted">${esc(b.sub || '')}</span>
           ${b.access === 'staff' ? `<span class="lb-lock">${LOCK_SVG} 강사 전용</span>` : ''}
           ${ready ? `<span class="lb-prog"><i style="width:${sx.pct}%"></i></span><span class="lb-meta">${sx.pct}% 읽음${r ? ' · ' + esc(r.text) : ''}</span>` : '<span class="lb-meta">아직 교재 데이터가 없습니다</span>'}</span></button>
+        ${edSel ? `<div class="lb-edbar">${edSel}${eds.length > 1 ? '<span class="muted small">판마다 형광펜·메모가 따로 저장됩니다</span>' : ''}</div>` : ''}
+        ${imp}
         ${t ? `<div class="lb-btns"><button type="button" class="primary" data-open="${b.id}">${r ? '이어 읽기' : '교재 열기'}</button><button type="button" class="lb-tbtn" data-open="${t.id}">${LOCK_SVG} ${esc(t.short || '교사 매뉴얼')}</button></div>
           <p class="muted small">교사 매뉴얼은 강사·관리자에게만 보입니다. 읽는 중에 위쪽 [교재 ↔ 교사용] 버튼으로 같은 과를 오갈 수 있어요.</p>` : ''}
-        ${admin ? `<div class="lb-admin">${accSel(b)}${t ? accSel(t) : ''}</div>` : ''}
+        ${admin ? `<div class="lb-admin">${edAdmin}${t ? accSel(t) : ''}</div>` : ''}
       </article>`; }).join('')}</section>`).join('') +
-    (admin ? `<button type="button" class="lb-add" id="lib-add"><b>+ 교재 추가</b><span class="muted">받은 교재데이터 폴더를 올리면 서재에 생깁니다</span></button>` : '');
+    (admin ? `<button type="button" class="lb-add" id="lib-add"><b>+ 교재 추가</b><span class="muted">받은 교재데이터 폴더를 올리면 서재에 생깁니다 (새 판도 여기서)</span></button>` : '');
 }
+
+/* 이전 판의 내 표시(형광펜·밑줄·메모·사진)·답·읽음 표시를 새 판으로 옮기기
+ * 같은 과 번호에서 같은 문장을 찾아 옮기고, 문장이 바뀐 곳은 '옮기지 못한 항목'으로 보여 줌 (이전 판에는 그대로 남음) */
+function blockText(b) { const d = document.createElement('div'); d.innerHTML = blockHTML(b, null); const tx = d.querySelector('.tx'); return tx ? tx.textContent : null; }
+const squash = t => String(t || '').replace(/\s+/g, '');
+async function importEdition(fromId, toId) {
+  const fb = bookById(fromId), tb = bookById(toId);
+  const [fi, ti] = await Promise.all([loadBookIndex(fromId), loadBookIndex(toId)]);
+  if (!fi || !ti) throw new Error('교재를 불러오지 못했습니다');
+  const lmap = {}; fi.lessons.forEach(l => { const t = ti.lessons.find(x => x.no === l.no && x.ready); if (t) lmap[l.id] = t.id; });
+  await Promise.all([...Object.keys(lmap), ...Object.values(lmap)].map(loadLesson));
+  const flat = L => L.units.flatMap(u => u.blocks);
+  const texts = new Map(); const tcache = (L, b) => { const k = b.id; if (!texts.has(k)) texts.set(k, blockText(b)); return texts.get(k); };
+  const res = { marks: 0, answers: 0, done: 0, lost: [] };
+  // 1) 형광펜·메모
+  const groups = {}; Store.marks().filter(m => m.lid && m.lid[0] === fb.prefix).forEach(m => (groups[m.gid] = groups[m.gid] || []).push(m));
+  for (const segs of Object.values(groups)) {
+    const first = segs[0]; const nlid = lmap[first.lid]; const out = [];
+    if (nlid) {
+      const NL = st.lessons[nlid]; const nb = flat(NL);
+      for (const sg of segs) {
+        const oi = +String(sg.block).split('-B')[1] || 0; let best = null;
+        nb.map((b, i) => ({ b, i, d: Math.abs(i + 1 - oi) })).sort((a, b) => a.d - b.d).some(({ b }) => {
+          const t = tcache(NL, b); if (!t || !sg.quote) return false;
+          let k = t.indexOf(sg.quote), pick = -1, bd = Infinity;
+          while (k >= 0) { const dd = Math.abs(k - sg.s); if (dd < bd) { bd = dd; pick = k; } k = t.indexOf(sg.quote, k + 1); }
+          if (pick >= 0) { best = { block: b.id, s: pick, e: pick + sg.quote.length }; return true; } return false;
+        });
+        if (!best) { out.length = 0; break; }
+        out.push(best);
+      }
+    }
+    const L0 = st.lessons[first.lid];
+    if (!out.length) { res.lost.push({ kind: '표시', where: L0 ? (lessonNo(L0) ? L0.no + '과' : L0.title) : '', quote: segs.map(x => x.quote).join(' … '), note: first.note || '', lid: first.lid, block: first.block }); continue; }
+    const gid = uidGen('g'); const at = Date.now();
+    const photos = [];
+    for (const pid of (first.photos || [])) { try { const img = await B.getPhoto(pid); if (img) { const np = uidGen('ph'); await B.putPhoto(np, { gid, img, at }); photos.push(np); } } catch (e) { console.warn(e); } }
+    Store.addMarks(out.map((o, i) => ({ id: gid + '-' + i, gid, lid: nlid, block: o.block, s: o.s, e: o.e, quote: segs[i].quote, c: first.c, note: i === 0 ? (first.note || '') : '', photos: i === 0 ? photos : [], at: first.at || at })));
+    res.marks++;
+  }
+  // 2) 답
+  for (const [id, a] of Object.entries(Store.answers()).filter(([id]) => id[0] === fb.prefix)) {
+    const olid = id.slice(0, 3), nlid = lmap[olid]; const OL = st.lessons[olid]; let target = null;
+    if (nlid && OL) {
+      const ob = flat(OL); const oi = ob.findIndex(b => b.id === id); const NL = st.lessons[nlid]; const nb = flat(NL);
+      // 답 칸 바로 앞의 질문(또는 문장)을 새 판에서 찾고, 그 뒤의 답 칸으로
+      let anchor = null; for (let i = oi; i >= 0 && !anchor; i--) { const t = tcache(OL, ob[i]); if (t && t.trim()) anchor = { i, t: squash(t), q: ob[i].t === 'q' && i === oi }; }
+      if (anchor) {
+        const ni = nb.findIndex(b => { const t = tcache(NL, b); return t && squash(t) === anchor.t; });
+        if (ni >= 0) {
+          if (nb[ni].t === 'q' && (anchor.q || ob[oi].t === 'lines')) target = nb[ni].id;
+          else { const nx = nb.slice(ni + 1).find(b => b.t === 'lines' || b.t === 'q'); if (nx) target = nx.id; }
+        }
+      }
+    }
+    if (!target) { res.lost.push({ kind: '답', where: OL ? (lessonNo(OL) ? OL.no + '과' : OL.title) : '', quote: '', note: a.t, lid: olid, block: id }); continue; }
+    if (!(Store.answers()[target] || {}).t) { await Store.setAnswer(target, a.t); res.answers++; }
+  }
+  // 3) 읽음 표시 (같은 과·같은 단원 제목)
+  Object.keys(Store.done()).filter(u => u[0] === fb.prefix).forEach(uid => {
+    const nlid = lmap[uid.slice(0, 3)]; const OL = st.lessons[uid.slice(0, 3)]; if (!nlid || !OL) return;
+    const ou = OL.units.find(u => u.id === uid); const nu = ou && st.lessons[nlid].units.find(u => squash(u.title) === squash(ou.title));
+    if (nu && !Store.done()[nu.id]) { Store.setDone(nu.id, true); res.done++; }
+  });
+  Store.setPref('imp_' + toId + '_' + fromId, Date.now());
+  return res;
+}
+function showImport(res, fb, tb) {
+  $('#imp-sum').innerHTML = `<b>${esc(fb.edition || fb.title)}</b> → <b>${esc(tb.edition || tb.title)}</b><br>형광펜·메모 <b>${res.marks}</b>개 · 답 <b>${res.answers}</b>개 · 읽음 표시 <b>${res.done}</b>개를 옮겼습니다.`;
+  $('#imp-lost').innerHTML = res.lost.length ? `<p class="muted small">아래 ${res.lost.length}개는 새 판에서 문장이 바뀌어 자동으로 옮기지 못했습니다. 이전 판에는 그대로 남아 있으니, 눌러서 이전 판에서 확인하세요.</p>` +
+    res.lost.map(x => `<button type="button" class="note" data-jump="${esc(x.block)}" data-lid="${esc(x.lid)}"><span class="kind">${esc(x.kind)} · ${esc(x.where)}</span>${x.quote ? `<q>${esc(x.quote.slice(0, 80))}</q>` : ''}${x.note ? esc(x.note.slice(0, 160)) : ''}</button>`).join('')
+    : '<p class="muted small">모든 항목을 옮겼습니다.</p>';
+  $('#imp').hidden = false;
+}
+$('#imp').addEventListener('click', e => {
+  if (e.target.id === 'imp' || e.target.closest('#imp-close')) { $('#imp').hidden = true; return; }
+  const j = e.target.closest('[data-jump]'); if (j) { $('#imp').hidden = true; openLesson(j.dataset.lid, 0, j.dataset.jump); }
+});
 async function showLibrary() {
   closeSheets(); if (tts) tts.rerendered();
   document.body.classList.add('lib-on'); $('#lib').hidden = false; $('#top-book').textContent = '서재'; $('#top-lesson').textContent = '';
@@ -1036,7 +1139,8 @@ async function openBook(id, lid = null, ui = 0, blockId = null, q = null) {
   if (!lid) { const p = Store.pref(posKey(id), null); if (p && ix.lessons.some(l => l.id === p.lid && l.ready)) { lid = p.lid; ui = p.ui; } else lid = firstReady(); }
   if (!lid) { toast('아직 읽을 수 있는 과가 없습니다'); return; }
   hideLibrary(); Store.setPref('lastBook', id);
-  $('#nav-book').textContent = b ? b.title : ''; updatePairBtn();
+  $('#nav-book').textContent = bookLabel(b); $('#nav-book').title = bookLabel(b); updatePairBtn();
+  if (b && b.series) Store.setPref('ed_' + b.series, id);
   if (changed) st.lid = null;
   await openLesson(lid, ui, blockId, q);
   updatePairBtn();
@@ -1057,10 +1161,34 @@ $('#btn-pair').addEventListener('click', async () => {
 });
 $('#lib').addEventListener('click', async e => {
   if (e.target.closest('#lib-add')) { openUploader(); return; }
+  const im = e.target.closest('[data-imp-from]');
+  if (im) {
+    const fb = bookById(im.dataset.impFrom), tb = bookById(im.dataset.impTo);
+    if (!confirm(`${fb.edition || fb.title}에 표시한 형광펜·메모·답을 ${tb.edition || tb.title}으로 가져올까요?\n이전 판의 표시는 지워지지 않고 그대로 남습니다.`)) return;
+    im.disabled = true; im.textContent = '가져오는 중…';
+    try { const r = await importEdition(fb.id, tb.id); renderLibrary(); showImport(r, fb, tb); }
+    catch (err) { toast('가져오지 못했습니다: ' + (err.code || err.message)); renderLibrary(); }
+    return;
+  }
+  const df = e.target.closest('[data-def]');
+  if (df) {
+    const b = bookById(df.dataset.def); if (!confirm(`「${b.title}」 ${b.edition || ''}을(를) 기본판으로 할까요?\n처음 여는 사람과 판을 고르지 않은 사람에게 이 판이 보입니다.`)) return;
+    st.library.forEach(x => { if (seriesOf(x) === seriesOf(b)) x.seriesDefault = x.id === b.id; });
+    try { await B.putLibrary(st.library); toast('기본판을 바꿨습니다'); } catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
+    renderLibrary(); return;
+  }
+  const en = e.target.closest('[data-edname]');
+  if (en) {
+    const b = bookById(en.dataset.edname); const v = prompt('판 이름 (예: 2026년 8월판, 2027 상반기판)', b.edition || ''); if (v == null || !v.trim()) return;
+    b.edition = v.trim(); if (!b.series) b.series = b.id;
+    try { await B.putLibrary(st.library); toast('판 이름을 바꿨습니다'); } catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
+    renderLibrary(); return;
+  }
   const o = e.target.closest('[data-open]'); if (!o || o.disabled) return;
   await openBook(o.dataset.open);
 });
 $('#lib').addEventListener('change', async e => {
+  const ed = e.target.closest('[data-ed]'); if (ed) { Store.setPref('ed_' + ed.dataset.ed, ed.value); renderLibrary(); return; }
   const sel = e.target.closest('[data-acc]'); if (!sel) return;
   const b = bookById(sel.dataset.acc); const v = sel.value; const label = v === 'staff' ? '강사·관리자만' : '모든 사용자';
   if (!confirm(`「${b.title}」 공개 대상을 '${label}'(으)로 바꿀까요?\n본문·원본 사진에 모두 적용되어 1~2분 걸릴 수 있습니다.`)) { sel.value = b.access || 'all'; return; }
