@@ -20,8 +20,11 @@
 <body>
 <header class="top">
   <button type="button" class="icon-btn only-tab" id="btn-nav" aria-label="목차 열기">☰</button>
-  <div class="brand"><b>제자의 삶</b><span class="brand-sub" id="top-lesson"></span></div>
+  <button type="button" class="icon-btn only-mob" id="btn-lib-m" aria-label="서재로"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 19V5a1 1 0 0 1 1-1h3v15H5a1 1 0 0 1-1-1zM8 4h4v15H8zM14 5.5l3.5-1 3 13.5-3.5 1z"></path></svg></button>
+  <div class="brand" title="서재로"><b id="top-book">제자의 삶</b><span class="brand-sub" id="top-lesson"></span></div>
   <div class="top-actions">
+    <button type="button" class="chip-btn" id="btn-lib" title="서재(교재 목록)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 19V5a1 1 0 0 1 1-1h3v15H5a1 1 0 0 1-1-1zM8 4h4v15H8zM14 5.5l3.5-1 3 13.5-3.5 1z"></path></svg><span class="lbl"> 서재</span></button>
+    <button type="button" class="chip-btn" id="btn-pair" hidden></button>
     <button type="button" class="chip-btn" id="btn-tts" aria-pressed="false" title="본문 소리로 듣기"><span aria-hidden="true">🔊</span><span class="lbl"> 듣기</span></button>
     <button type="button" class="chip-btn" id="btn-orig" aria-pressed="false">원본 보기</button>
     <div class="fs" role="group" aria-label="글자 크기">
@@ -35,9 +38,10 @@
 <div class="shell">
   <aside id="nav" aria-label="목차와 검색">
     <div class="sheet-head only-mob"><b id="nav-title">목차</b><button type="button" class="icon-btn" data-close aria-label="닫기">✕</button></div>
+    <div class="nav-book"><button type="button" id="nav-lib" class="nav-lib">‹ 서재</button><b id="nav-book">제자의 삶</b></div>
     <label class="search"><span aria-hidden="true">⌕</span><input id="q" type="search" placeholder="교재 · 내 메모 검색" autocomplete="off"></label>
     <div class="scope" id="scope">
-      <button type="button" data-s="all" class="on">전체</button><button type="button" data-s="lesson">이 과</button><button type="button" data-s="mine">내 메모·답</button>
+      <button type="button" data-s="all" class="on">이 교재</button><button type="button" data-s="lesson">이 과</button><button type="button" data-s="books">모든 교재</button><button type="button" data-s="mine">내 메모·답</button>
     </div>
     <div id="results" hidden></div>
     <ol id="toc"></ol>
@@ -76,6 +80,8 @@
     </section>
   </aside>
 </div>
+
+ <section id="lib" class="lib" aria-label="서재" hidden><div class="lib-wrap" id="lib-body"></div></section>
 
 <nav id="tabbar" class="only-mob" aria-label="하단 메뉴">
   <button type="button" data-tab="toc"><i>☰</i>목차</button>

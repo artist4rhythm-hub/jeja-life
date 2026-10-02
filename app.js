@@ -60,15 +60,38 @@ const plain = s => String(s || '').replace(/\*\*/g, '').replace(/(^|[^*])\*([^*\
 const uidGen = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const mq = matchMedia('(max-width:759px)');
 const isMob = () => mq.matches;
-const pageLabel = p => /^i\d/.test(p) ? `안내 ${p.slice(1)}쪽` : `${p}쪽`;
+// 쪽 이름: 제자의 삶 = "12", "i1" / 새 교재 = 책코드_쪽 ("cs_3", "ct_i2")
+const pageLabel = p => { const v = String(p).replace(/^[a-z]+_/, ''); return /^i\d/.test(v) ? `안내 ${v.slice(1)}쪽` : `${v}쪽`; };
 const lessonNo = L => (L.no >= 1 && L.no <= 12) ? String(L.no) : '';
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 1800); }
 
 let tts = null;
-const st = { index: null, lessons: {}, lid: null, ui: 0, pg: null, scope: 'all', visibleUnit: null };
+const st = { library: [], indexes: {}, book: null, index: null, lessons: {}, lid: null, ui: 0, pg: null, scope: 'all', visibleUnit: null };
 
 /* ---------------- 데이터 ---------------- */
-async function loadIndex() { st.index = await B.getIndex(); return st.index; }
+/* ---------------- 서재 (여러 교재) ----------------
+ * lessons/_library 에 교재 목록, 교재마다 목차 문서(제자의 삶 = _index, 새 교재 = _index_<책코드>).
+ * 과 ID 앞글자로 어느 교재인지 압니다 (L = 제자의 삶, S = 창조주를 소개합니다, T = 교사 매뉴얼 …). */
+const JEJA = { id: 'jeja', title: '제자의 삶', short: '제자의 삶', sub: '예수님을 사랑함으로 좇아가는 삶', tag: '훈련 시리즈 2', prefix: 'L', color: 'green', access: 'all', group: '제자 훈련', order: 1, indexDoc: '_index' };
+const isStaff = () => st.me && (st.me.role === 'admin' || st.me.role === 'teacher');
+const canSee = b => b && (b.access !== 'staff' || isStaff());
+const bookById = id => st.library.find(b => b.id === id);
+const bookOfLid = lid => st.library.find(b => lid && lid[0] === b.prefix) || null;
+const posKey = id => id === 'jeja' ? 'pos' : 'pos_' + id;
+const curBook = () => bookById(st.book) || JEJA;
+async function loadLibrary() {
+  let lib = await B.getLibrary(); lib = Array.isArray(lib) ? lib : [];
+  if (!lib.some(b => b.id === 'jeja')) lib.unshift({ ...JEJA });
+  st.library = lib.sort((a, b) => (a.order || 99) - (b.order || 99));
+  return st.library;
+}
+async function loadBookIndex(id) {
+  if (st.indexes[id]) return st.indexes[id];
+  const b = bookById(id); if (!b || !canSee(b)) return null;
+  const ix = await B.getIndex(b.indexDoc || (id === 'jeja' ? '_index' : '_index_' + id));
+  if (ix) st.indexes[id] = ix; return ix;
+}
+async function loadIndex() { st.indexes = {}; await loadLibrary(); st.index = await loadBookIndex(st.book || 'jeja'); return st.index; }
 async function loadLesson(lid) {
   if (st.lessons[lid]) return st.lessons[lid];
   const L = await B.getLesson(lid);
@@ -86,10 +109,10 @@ function renderToc() {
   $('#toc').innerHTML = st.index.lessons.map(x => {
     const on = x.id === st.lid;
     const units = on && L ? `<ol class="units">${L.body.map((u, i) =>
-      `<li><button type="button" data-unit="${i}" class="${(isMob() ? i === st.ui : u.id === st.visibleUnit) ? 'on' : ''} ${done[u.id] ? 'done' : ''}">${esc(u.title)}</button></li>`).join('')}</ol>` : '';
+      `<li><button type="button" data-unit="${i}" class="${(isMob() ? i === st.ui : u.id === st.visibleUnit) ? 'on' : ''} ${done[u.id] ? 'done' : ''}" title="${esc(plain(u.title))}">${esc(plain(u.title).length > 38 ? plain(u.title).slice(0, 36) + '…' : plain(u.title))}</button></li>`).join('')}</ol>` : '';
     return `<li class="${x.ready ? '' : 'off'} ${on ? 'cur' : ''}"><button type="button" data-lesson="${x.id}" ${x.ready ? '' : 'aria-disabled="true"'}>
       <span class="no">${lessonNo(x)}</span><span>${esc(x.title)}</span>
-      <span class="pg">${x.ready ? (/^i/.test(x.pageFrom) ? '' : x.pageFrom + '쪽') : '준비 중'}</span></button>${units}</li>`;
+      <span class="pg">${x.ready ? (/^(?:[a-z]+_)?i/.test(x.pageFrom) ? '' : pageLabel(x.pageFrom)) : '준비 중'}</span></button>${units}</li>`;
   }).join('');
 }
 $('#toc').addEventListener('click', e => {
@@ -199,12 +222,14 @@ function renderReader() {
   r.innerHTML = html;
   if (tts) tts.rerendered();
   $('#top-lesson').textContent = (lessonNo(L) ? L.no + '과 ' : '') + L.title;
+  $('#top-book').textContent = curBook().short || curBook().title;
   applyMarks(); hydrateImages(r); observeBlocks();
   const chip = $('.chips .on', r); if (chip) chip.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
 const short = t => { const s = plain(t).replace(/[.?!]$/, ''); return s.length > 13 ? s.slice(0, 12) + '…' : s; };
 
 async function openLesson(lid, ui = 0, blockId = null, q = null) {
+  const bk = bookOfLid(lid); if (bk && bk.id !== st.book) return openBook(bk.id, lid, ui, blockId, q);
   const L = await loadLesson(lid);
   if (!Store.hasAtts(lid)) await Store.loadAtts(lid);
   watchLessonAtts(lid);
@@ -213,7 +238,7 @@ async function openLesson(lid, ui = 0, blockId = null, q = null) {
   st.ui = Math.min(Math.max(ui, 0), L.body.length - 1);
   renderReader(); renderToc(); renderNotes(); renderFiles();
   if (changed || !st.pg) showPage(L.pages[0], true);
-  Store.setPref('pos', { lid, ui: st.ui });
+  Store.setPref(posKey(st.book), { lid, ui: st.ui });
   history.replaceState(null, '', '#' + L.body[st.ui].id);
   if (blockId) jumpTo(blockId, q);
   else if (isMob()) window.scrollTo(0, 0);
@@ -222,7 +247,7 @@ async function openLesson(lid, ui = 0, blockId = null, q = null) {
 }
 function goUnit(i) {
   const L = cur(); if (!L) return;
-  if (isMob()) { st.ui = Math.min(Math.max(i, 0), L.body.length - 1); renderReader(); renderToc(); window.scrollTo(0, 0); Store.setPref('pos', { lid: st.lid, ui: st.ui }); history.replaceState(null, '', '#' + L.body[st.ui].id); }
+  if (isMob()) { st.ui = Math.min(Math.max(i, 0), L.body.length - 1); renderReader(); renderToc(); window.scrollTo(0, 0); Store.setPref(posKey(st.book), { lid: st.lid, ui: st.ui }); history.replaceState(null, '', '#' + L.body[st.ui].id); }
   else { const el = $('#' + L.body[i].id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 }
 function jumpTo(blockId, q) {
@@ -612,7 +637,11 @@ function observeBlocks() {
 async function search(q) {
   const res = $('#results'), toc = $('#toc');
   if (!q) { res.hidden = true; toc.hidden = false; return; }
-  const ready = st.index.lessons.filter(l => l.ready);
+  let ready;
+  if (st.scope === 'books') {
+    const vis = st.library.filter(canSee); await Promise.all(vis.map(b => loadBookIndex(b.id).catch(() => null)));
+    ready = vis.flatMap(b => ((st.indexes[b.id] || {}).lessons || []).filter(l => l.ready).map(l => ({ ...l, book: b })));
+  } else ready = st.index.lessons.filter(l => l.ready).map(l => ({ ...l, book: curBook() }));
   await Promise.all(ready.map(l => loadLesson(l.id)));
   const out = [];
   const snip = (t, i) => { const s = Math.max(0, i - 20); return (s ? '…' : '') + t.slice(s, i + q.length + 30) + (i + q.length + 30 < t.length ? '…' : ''); };
@@ -621,19 +650,19 @@ async function search(q) {
     const g = {}; Store.marks().forEach(m => { const k = m.gid; g[k] = g[k] || m; });
     Object.values(g).forEach(m => { const t = (m.note || '') + ' ' + m.quote; const i = t.indexOf(q); if (i >= 0) out.push({ lid: m.lid, block: m.block, label: '내 메모', text: snip(t, i) }); });
     Object.entries(Store.answers()).forEach(([id, a]) => { const i = a.t.indexOf(q); if (i >= 0) out.push({ lid: id.slice(0, 3), block: id, label: '내 답', text: snip(a.t, i) }); });
-    Store.atts().forEach(a => { const t = a.title + ' ' + (a.text || '') + ' ' + (a.url || ''); const i = t.indexOf(q); if (i >= 0) out.push({ lid: a.lid, block: (st.lessons[a.lid].units.find(u => u.id === a.uid) || { blocks: [{}] }).blocks[0].id, label: '추가 자료', text: snip(t, i) }); });
+    Store.atts().forEach(a => { if (!st.lessons[a.lid]) return; const t = a.title + ' ' + (a.text || '') + ' ' + (a.url || ''); const i = t.indexOf(q); if (i >= 0) out.push({ lid: a.lid, block: (st.lessons[a.lid].units.find(u => u.id === a.uid) || { blocks: [{}] }).blocks[0].id, label: '추가 자료', text: snip(t, i) }); });
   } else {
-    ready.filter(l => st.scope === 'all' || l.id === st.lid).forEach(l => {
+    ready.filter(l => st.scope !== 'lesson' || l.id === st.lid).forEach(l => {
       const L = st.lessons[l.id];
       L.units.forEach(u => u.blocks.forEach(b => {
         const t = plain((b.ref ? '[' + b.ref + '] ' : '') + (b.text || '') + (b.rows ? b.rows.flat().join(' ') : ''));
         const i = t.indexOf(q); if (i < 0) return;
-        out.push({ lid: l.id, block: b.id, label: `${lessonNo(L) ? L.no + '과' : L.title} · ${u.title === '표지' ? '표지' : plain(u.title)} · ${pageLabel(b.page)}`, text: snip(t, i), q });
+        out.push({ lid: l.id, block: b.id, label: `${st.scope === 'books' ? (l.book.short || l.book.title) + ' · ' : ''}${lessonNo(L) ? L.no + '과' : L.title} · ${u.title === '표지' ? '표지' : plain(u.title)} · ${pageLabel(b.page)}`, text: snip(t, i), q });
       }));
     });
   }
   toc.hidden = true; res.hidden = false;
-  res.innerHTML = `<p class="res-count">「${esc(q)}」 ${out.length}건 · 현재 텍스트화된 과만 검색됩니다</p>` +
+  res.innerHTML = `<p class="res-count">「${esc(q)}」 ${out.length}건${out.length > 200 ? ' · 앞의 200건만 표시' : ''}</p>` +
     out.slice(0, 200).map((o, i) => `<button type="button" class="res" data-i="${i}"><b>${esc(o.label)}</b>${hl(o.text)}</button>`).join('');
   res.onclick = e => { const b = e.target.closest('.res'); if (!b) return; const o = out[+b.dataset.i]; closeSheets(); openLesson(o.lid, 0, o.block, o.q ? q : null); };
 }
@@ -673,9 +702,9 @@ mq.addEventListener('change', () => { if (!cur()) return; closeSheets(); setOrig
 let uplItems = [];
 function classify(f) {
   const n = f.name;
-  if (n === 'index.json') return { kind: 'index', label: '목차', order: 3 };
-  let m = n.match(/^(L\d\d)\.json$/); if (m) return { kind: 'lesson', lid: m[1], label: '본문 ' + m[1], order: 2 };
-  m = n.match(/^p(.+)\.webp$/); if (m) return { kind: 'page', page: m[1], label: '원본 ' + pageLabel(m[1]), order: 1 };
+  let m = n.match(/^index(?:_([a-z]+))?\.json$/); if (m) return { kind: 'index', book: m[1] || null, label: '목차' + (m[1] ? ' · ' + m[1] : ''), order: 3 };
+  m = n.match(/^([A-Z]\d\d)\.json$/); if (m) return { kind: 'lesson', lid: m[1], label: '본문 ' + m[1], order: 2 };
+  m = n.match(/^p(.+)\.webp$/); if (m) return { kind: 'page', page: m[1], label: '원본 ' + (m[1].match(/^([a-z]+)_/) || ['', ''])[1] + ' ' + pageLabel(m[1]), order: 1 };
   return null;
 }
 async function entriesToFiles(entry) {
@@ -700,16 +729,28 @@ const readText = f => f.text();
 const readDataUrl = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
 async function runUpload() {
   $('#upl-go').disabled = true;
-  const lessonsIn = {};
+  // 1) 목차 파일에서 교재 정보(이름·공개 대상 등)를, 본문 파일에서 과·쪽 정보를 먼저 읽음
+  const indexIn = {}, lessonsIn = {};
+  for (const x of uplItems.filter(x => x.kind === 'index')) {
+    try { const o = JSON.parse(await readText(x.file)); const id = (o.meta && o.meta.id) || x.book || 'jeja'; indexIn[id] = o; x.bookId = id; } catch (e) { x.status = '실패: 파일 형식 오류'; }
+  }
   for (const x of uplItems.filter(x => x.kind === 'lesson')) { try { lessonsIn[x.lid] = JSON.parse(await readText(x.file)); } catch (e) { x.status = '실패: 파일 형식 오류'; } }
+  await loadLibrary().catch(() => {});
+  const metaOf = id => { const o = indexIn[id]; const ex = bookById(id) || {};
+    const m = (o && o.meta) || {};
+    return { ...(id === 'jeja' ? JEJA : {}), ...m, ...ex, id, access: ex.access || m.access || 'all', indexDoc: id === 'jeja' ? '_index' : '_index_' + id,
+      title: m.title || ex.title || (o && o.book) || id }; };
+  const bookOfPrefix = c => { const ix = Object.values(indexIn).find(o => o.meta && o.meta.prefix === c); return ix ? ix.meta.id : ((st.library.find(b => b.prefix === c) || {}).id || 'jeja'); };
+  const lidBook = lid => (lessonsIn[lid] && lessonsIn[lid].book) || bookOfPrefix(lid[0]);
+  const pageBook = p => { const m = String(p).match(/^([a-z]+)_/); return m ? m[1] : 'jeja'; };
   const pageLid = {}; Object.values(lessonsIn).forEach(L => (L.pages || []).forEach(p => pageLid[p] = L.id));
   const todo = uplItems.filter(x => x.status !== '완료' && !x.status.startsWith('실패'));
   const one = async x => {
     x.status = '올리는 중'; renderUpl();
     try {
-      if (x.kind === 'page') { const url = await readDataUrl(x.file); if (url.length > 890000) throw new Error('사진이 너무 큼'); await B.putPage(x.page, pageLid[x.page], url); }
-      if (x.kind === 'lesson') await B.putLesson(x.lid, lessonsIn[x.lid]);
-      if (x.kind === 'index') await B.putIndex(JSON.parse(await readText(x.file)));
+      if (x.kind === 'page') { const url = await readDataUrl(x.file); if (url.length > 890000) throw new Error('사진이 너무 큼'); await B.putPage(x.page, pageLid[x.page], url, metaOf(pageBook(x.page)).access); }
+      if (x.kind === 'lesson') await B.putLesson(x.lid, lessonsIn[x.lid], metaOf(lidBook(x.lid)).access);
+      if (x.kind === 'index') { const m = metaOf(x.bookId); await B.putIndex(indexIn[x.bookId], m.indexDoc, m.access); }
       x.status = '완료';
     } catch (e) { x.status = '실패: ' + (e.code === 'permission-denied' ? '관리자 권한 없음' : e.message); }
     renderUpl();
@@ -720,8 +761,14 @@ async function runUpload() {
   }
   const bad = uplItems.filter(x => x.status.startsWith('실패')).length;
   if (bad) { toast(`${bad}개를 올리지 못했습니다`); renderUpl(); return; }
-  toast('교재를 올렸습니다'); st.lessons = {}; await loadIndex();
-  if (st.index) { $('#upl').hidden = true; await openLesson(st.lid && st.index.lessons.some(l => l.id === st.lid && l.ready) ? st.lid : firstReady(), 0); }
+  // 2) 서재 목록에 교재 등록(이미 있으면 정보만 새로)
+  const ids = Object.keys(indexIn);
+  if (ids.length) {
+    ids.forEach(id => { const m = metaOf(id); const i = st.library.findIndex(b => b.id === id); const entry = { ...(i >= 0 ? st.library[i] : {}), ...m }; delete entry.lessons; if (i >= 0) st.library[i] = entry; else st.library.push(entry); });
+    try { await B.putLibrary(st.library); } catch (e) { toast('서재 목록을 저장하지 못했습니다: ' + (e.code || e.message)); return; }
+  }
+  toast('교재를 올렸습니다'); st.lessons = {}; st.indexes = {}; await loadLibrary();
+  $('#upl').hidden = true; await showLibrary();
 }
 function openUploader() { uplItems = []; renderUpl(); $('#upl').hidden = false; }
 $('#btn-admin').addEventListener('click', () => { closeSheets(); openUploader(); });
@@ -933,6 +980,104 @@ $('#pp-list').addEventListener('click', async e => {
   } catch (err) { toast('처리하지 못했습니다: ' + (err.code || err.message)); b.disabled = false; }
 });
 
+/* ---------------- 서재 화면 ---------------- */
+const LOCK_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>';
+function bookStats(id) {
+  const ix = st.indexes[id]; if (!ix) return { pct: 0, lessons: 0 };
+  const units = ix.lessons.filter(l => l.ready).flatMap(l => (l.units || []).filter(u => u.title !== '표지'));
+  const done = Store.done(); const n = units.filter(u => done[u.id]).length;
+  return { pct: units.length ? Math.round(n * 100 / units.length) : 0, lessons: ix.lessons.filter(l => l.no >= 1).length };
+}
+function resumeOf(id) {
+  const ix = st.indexes[id]; const p = Store.pref(posKey(id), null); if (!ix || !p) return null;
+  const l = ix.lessons.find(x => x.id === p.lid); if (!l) return null;
+  const u = (l.units || []).filter(u => u.title !== '표지')[p.ui];
+  return { lid: p.lid, ui: p.ui, text: `${l.no >= 1 ? l.no + '과 ' : ''}${l.title}${u ? ' · ' + plain(u.title) : ''}` };
+}
+function coverHTML(b, small) {
+  return `<div class="cover cv-${esc(b.color || 'green')}${small ? ' sm' : ''}" aria-hidden="true"><small>${esc(b.tag || '')}</small><b>${esc(b.coverTitle || b.title)}</b><span>수원하나교회</span></div>`;
+}
+function renderLibrary() {
+  const vis = st.library.filter(canSee);
+  const teacherOf = {};
+  vis.forEach(b => { if (b.role === 'teacher' && b.pair && vis.some(x => x.id === b.pair)) teacherOf[b.pair] = b; });
+  const shown = vis.filter(b => !(b.role === 'teacher' && teacherOf[b.pair] === b));
+  const groups = []; shown.forEach(b => { const g = b.group || '교재'; let G = groups.find(x => x.name === g); if (!G) groups.push(G = { name: g, books: [] }); G.books.push(b); });
+  const admin = isAdmin() && B.kind === 'firebase';
+  const accSel = b => admin ? `<label class="lb-acc">${esc(b.short || b.title)} 공개 대상
+      <select data-acc="${b.id}"><option value="all" ${b.access !== 'staff' ? 'selected' : ''}>모든 사용자</option><option value="staff" ${b.access === 'staff' ? 'selected' : ''}>강사·관리자만</option></select></label>` : '';
+  const last = bookById(Store.pref('lastBook', '')); const lr = last && canSee(last) && resumeOf(last.id);
+  $('#lib-body').innerHTML = (lr ? `<button type="button" class="lb-resume" data-open="${last.id}" data-resume="1">
+        ${coverHTML(last, true)}<span class="lb-rt"><small>이어 읽기</small><b>${esc(last.short || last.title)}</b><span>${esc(lr.text)}</span></span><span class="lb-go" aria-hidden="true">›</span></button>` : '') +
+    groups.map(G => `<section class="lb-group"><h2>${esc(G.name)}</h2>${G.books.map(b => {
+      const t = teacherOf[b.id]; const sx = bookStats(b.id); const r = resumeOf(b.id); const ready = !!st.indexes[b.id];
+      return `<article class="lb-card">
+        <button type="button" class="lb-main" data-open="${b.id}" ${ready ? '' : 'disabled'}>${coverHTML(b)}
+          <span class="lb-info"><b>${esc(b.title)}</b><span class="muted">${esc(b.sub || '')}</span>
+          ${b.access === 'staff' ? `<span class="lb-lock">${LOCK_SVG} 강사 전용</span>` : ''}
+          ${ready ? `<span class="lb-prog"><i style="width:${sx.pct}%"></i></span><span class="lb-meta">${sx.pct}% 읽음${r ? ' · ' + esc(r.text) : ''}</span>` : '<span class="lb-meta">아직 교재 데이터가 없습니다</span>'}</span></button>
+        ${t ? `<div class="lb-btns"><button type="button" class="primary" data-open="${b.id}">${r ? '이어 읽기' : '교재 열기'}</button><button type="button" class="lb-tbtn" data-open="${t.id}">${LOCK_SVG} ${esc(t.short || '교사 매뉴얼')}</button></div>
+          <p class="muted small">교사 매뉴얼은 강사·관리자에게만 보입니다. 읽는 중에 위쪽 [교재 ↔ 교사용] 버튼으로 같은 과를 오갈 수 있어요.</p>` : ''}
+        ${admin ? `<div class="lb-admin">${accSel(b)}${t ? accSel(t) : ''}</div>` : ''}
+      </article>`; }).join('')}</section>`).join('') +
+    (admin ? `<button type="button" class="lb-add" id="lib-add"><b>+ 교재 추가</b><span class="muted">받은 교재데이터 폴더를 올리면 서재에 생깁니다</span></button>` : '');
+}
+async function showLibrary() {
+  closeSheets(); if (tts) tts.rerendered();
+  document.body.classList.add('lib-on'); $('#lib').hidden = false; $('#top-book').textContent = '서재'; $('#top-lesson').textContent = '';
+  await Promise.all(st.library.filter(canSee).map(b => loadBookIndex(b.id).catch(() => null)));
+  renderLibrary(); window.scrollTo(0, 0);
+}
+function hideLibrary() { document.body.classList.remove('lib-on'); $('#lib').hidden = true; }
+async function openBook(id, lid = null, ui = 0, blockId = null, q = null) {
+  const b = bookById(id); const ix = await loadBookIndex(id);
+  if (!ix) { toast('이 교재를 열 수 없습니다'); return; }
+  const changed = st.book !== id; st.book = id; st.index = ix;
+  if (!lid) { const p = Store.pref(posKey(id), null); if (p && ix.lessons.some(l => l.id === p.lid && l.ready)) { lid = p.lid; ui = p.ui; } else lid = firstReady(); }
+  if (!lid) { toast('아직 읽을 수 있는 과가 없습니다'); return; }
+  hideLibrary(); Store.setPref('lastBook', id);
+  $('#nav-book').textContent = b ? b.title : ''; updatePairBtn();
+  if (changed) st.lid = null;
+  await openLesson(lid, ui, blockId, q);
+  updatePairBtn();
+}
+/* 교재 ↔ 교사 매뉴얼: 같은 과 번호로 이동 */
+function pairOf(b) { const p = b && b.pair && bookById(b.pair); return p && canSee(p) ? p : null; }
+function updatePairBtn() {
+  const p = pairOf(curBook()); const btn = $('#btn-pair'); btn.hidden = !p;
+  if (p) btn.innerHTML = p.role === 'teacher' ? `${LOCK_SVG}<span class="lbl"> 교사용</span>` : `<span aria-hidden="true">📘</span><span class="lbl"> 교재</span>`;
+  if (p) btn.title = (p.role === 'teacher' ? '같은 과의 교사 매뉴얼로' : '같은 과의 교재로') + ' 이동';
+}
+$('#btn-pair').addEventListener('click', async () => {
+  const p = pairOf(curBook()); if (!p) return; const L = cur();
+  const ix = await loadBookIndex(p.id); if (!ix) { toast('열 수 없습니다'); return; }
+  const same = L && L.no >= 1 ? ix.lessons.find(l => l.no === L.no && l.ready) : null;
+  await openBook(p.id, same ? same.id : null, 0);
+  if (same) toast(`${p.short || p.title} · ${same.no}과`);
+});
+$('#lib').addEventListener('click', async e => {
+  if (e.target.closest('#lib-add')) { openUploader(); return; }
+  const o = e.target.closest('[data-open]'); if (!o || o.disabled) return;
+  await openBook(o.dataset.open);
+});
+$('#lib').addEventListener('change', async e => {
+  const sel = e.target.closest('[data-acc]'); if (!sel) return;
+  const b = bookById(sel.dataset.acc); const v = sel.value; const label = v === 'staff' ? '강사·관리자만' : '모든 사용자';
+  if (!confirm(`「${b.title}」 공개 대상을 '${label}'(으)로 바꿀까요?\n본문·원본 사진에 모두 적용되어 1~2분 걸릴 수 있습니다.`)) { sel.value = b.access || 'all'; return; }
+  sel.disabled = true;
+  try {
+    const ix = await loadBookIndex(b.id); const ids = ix.lessons.filter(l => l.ready).map(l => l.id);
+    await Promise.all(ids.map(loadLesson));
+    const pages = [...new Set(ids.flatMap(id => st.lessons[id].pages || []))];
+    await B.setBookAccess(b.indexDoc || '_index', ids, pages, v, (n, t) => { $('#toast').textContent = `공개 대상 바꾸는 중… ${n}/${t}`; $('#toast').hidden = false; });
+    b.access = v; await B.putLibrary(st.library);
+    toast(`「${b.title}」 → ${label}`); renderLibrary();
+  } catch (err) { toast('바꾸지 못했습니다: ' + (err.code || err.message)); sel.value = b.access || 'all'; }
+  finally { sel.disabled = false; }
+});
+[$('#btn-lib'), $('#btn-lib-m'), $('#nav-lib')].forEach(b => b.addEventListener('click', showLibrary));
+$('.top .brand').addEventListener('click', () => { if (!document.body.classList.contains('lib-on') && st.me) showLibrary(); });
+
 /* ---------------- 음성 듣기 ---------------- */
 function setupTTS() {
   if (tts) return;
@@ -960,7 +1105,7 @@ function setupTTS() {
 }
 
 /* ---------------- 시작: 로그인 → 권한 확인 → 교재 ---------------- */
-const firstReady = () => { const x = st.index.lessons.find(l => l.ready && l.no >= 1) || st.index.lessons.find(l => l.ready); return x ? x.id : null; };
+const firstReady = () => { if (!st.index) return null; const x = st.index.lessons.find(l => l.ready && l.no >= 1) || st.index.lessons.find(l => l.ready); return x ? x.id : null; };
 function gate(state, info = {}) {
   const g = $('#gate'); g.hidden = state === 'none';
   $$('[data-g]', g).forEach(x => x.hidden = x.dataset.g !== state);
@@ -989,24 +1134,28 @@ async function enterApp(info) {
   document.body.dataset.role = info.role || 'member'; st.me = info;
   $('#btn-logout').hidden = B.kind !== 'firebase';
   setupTTS();
-  await loadIndex();
+  await loadLibrary();
   await loadBooks().catch(() => {});
+  st.index = await loadBookIndex('jeja');
   gate('none');
-  if (!st.index || !firstReady()) {
+  const anyBook = st.library.some(b => b.id !== 'jeja' && canSee(b));
+  if ((!st.index || !firstReady()) && !anyBook) {
     $('#reader').innerHTML = `<div class="page-wrap"><h2>교재 데이터가 아직 없습니다</h2><p>${info.role === 'admin' ? '받은 <b>교재데이터</b> 폴더를 [교재 올리기]에서 올려 주세요.' : '관리자가 교재를 올리면 여기에 표시됩니다.'}</p></div>`;
     if (info.role === 'admin' && B.kind === 'firebase') openUploader();
     return;
   }
-  const h = location.hash.slice(1); const m = h.match(/^(L\d\d)-U/);
-  let lid = firstReady(), ui = 0;
-  if (m && st.index.lessons.some(l => l.id === m[1] && l.ready)) {
-    lid = m[1]; const L = await loadLesson(lid); ui = Math.max(0, L.body.findIndex(u => u.id === h));
-  } else { const p = Store.pref('pos', null); if (p && st.index.lessons.some(l => l.id === p.lid && l.ready)) { lid = p.lid; ui = p.ui; } }
-  await openLesson(lid, ui);
+  // 주소 끝에 과 주소(#S01-U02 등)가 있으면 그 교재·과로, 아니면 서재부터
+  const h = location.hash.slice(1); const m = h.match(/^([A-Z]\d\d)-U/);
+  const hb = m && bookOfLid(m[1]);
+  if (hb && canSee(hb)) {
+    const ix = await loadBookIndex(hb.id);
+    if (ix && ix.lessons.some(l => l.id === m[1] && l.ready)) { const L = await loadLesson(m[1]); await openBook(hb.id, m[1], Math.max(0, L.body.findIndex(u => u.id === h))); }
+    else await showLibrary();
+  } else await showLibrary();
   // 관리자: 공개 설정이 없던 예전 자료를 '전체 공개'로 한 번 정리 (이 기기에서 한 번만)
   if (info.role === 'admin' && B.kind === 'firebase') {
     let doneKey = null; try { doneKey = localStorage.getItem('jesam.attvis.v1'); } catch (e) {}
-    if (!doneKey) B.migrateAttVis(st.index.lessons.map(l => l.id)).then(n => { try { localStorage.setItem('jesam.attvis.v1', String(Date.now())); } catch (e) {} if (n) { toast(`예전 자료 ${n}개를 🌐 전체 공개로 정리했습니다`); syncNow(true); } }).catch(e => console.warn('migrate', e));
+    if (!doneKey && st.indexes.jeja) B.migrateAttVis(st.indexes.jeja.lessons.map(l => l.id)).then(n => { try { localStorage.setItem('jesam.attvis.v1', String(Date.now())); } catch (e) {} if (n) { toast(`예전 자료 ${n}개를 🌐 전체 공개로 정리했습니다`); syncNow(true); } }).catch(e => console.warn('migrate', e));
   }
 }
 

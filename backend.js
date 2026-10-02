@@ -86,7 +86,10 @@ async function FirebaseBackend(config) {
     },
     signOut: () => A.signOut(auth),
 
-    async getIndex() { const s = await F.getDoc(d('lessons', '_index')); return s.exists() ? JSON.parse(s.data().json) : null; },
+    // 서재: 교재 목록 (lessons/_library) · 교재별 목차 (lessons/_index = 제자의 삶, lessons/_index_cs … = 새 교재)
+    async getLibrary() { try { const s = await F.getDoc(d('lessons', '_library')); return s.exists() ? JSON.parse(s.data().json) : null; } catch (e) { return null; } },
+    putLibrary: list => F.setDoc(d('lessons', '_library'), { json: JSON.stringify(list), at: Date.now() }),
+    async getIndex(doc = '_index') { try { const s = await F.getDoc(d('lessons', doc)); return s.exists() ? JSON.parse(s.data().json) : null; } catch (e) { if (e.code === 'permission-denied') return null; throw e; } },
     async getLesson(lid) { const s = await F.getDoc(d('lessons', lid)); if (!s.exists()) throw new Error(lid + ' 데이터가 없습니다'); return JSON.parse(s.data().json); },
     async pageUrl(p) {
       if (pageCache.has(p)) return pageCache.get(p);
@@ -172,9 +175,19 @@ async function FirebaseBackend(config) {
     },
 
     // 관리자: 교재 올리기
-    putIndex: obj => F.setDoc(d('lessons', '_index'), { json: JSON.stringify(obj), at: Date.now() }),
-    putLesson: (lid, obj) => F.setDoc(d('lessons', lid), { json: JSON.stringify(obj), at: Date.now() }),
-    putPage: (p, lid, dataUrl) => { pageCache.delete(p); return F.setDoc(d('pages', 'p' + p), { lid: lid || '', img: dataUrl, at: Date.now() }); }
+    // access: 'all'(모든 사용자) | 'staff'(강사·관리자만) — 보안 규칙이 이 값으로 읽기를 막음
+    putIndex: (obj, doc = '_index', access = 'all') => F.setDoc(d('lessons', doc), { json: JSON.stringify(obj), access, at: Date.now() }),
+    putLesson: (lid, obj, access = 'all') => F.setDoc(d('lessons', lid), { json: JSON.stringify(obj), access, at: Date.now() }),
+    putPage: (p, lid, dataUrl, access = 'all') => { pageCache.delete(p); return F.setDoc(d('pages', 'p' + p), { lid: lid || '', img: dataUrl, access, at: Date.now() }); },
+    // 관리자: 교재 공개 대상 바꾸기 (목차·본문·원본 사진 문서에 모두 표시)
+    async setBookAccess(indexDoc, lids, pages, access, onStep) {
+      const ids = [['lessons', indexDoc], ...lids.map(l => ['lessons', l]), ...pages.map(p => ['pages', 'p' + p])];
+      let n = 0;
+      for (let i = 0; i < ids.length; i += 10) {
+        await Promise.all(ids.slice(i, i + 10).map(([c, id]) => F.updateDoc(d(c, id), { access }).catch(e => { if (e.code !== 'not-found') throw e; })));
+        n = Math.min(ids.length, i + 10); onStep && onStep(n, ids.length);
+      }
+    }
   };
 }
 
@@ -186,9 +199,12 @@ function LocalBackend() {
   const save = () => { try { localStorage.setItem(K, JSON.stringify(db)); } catch (e) { console.warn('저장 공간 부족'); } return Promise.resolve(); };
   return {
     kind: 'local',
-    onAuth(cb) { cb({ state: 'in', uid: 'local', name: '이 기기', role: 'admin' }); },
+    onAuth(cb) { cb({ state: 'in', uid: 'local', name: '이 기기', role: (location.search.match(/role=(\w+)/) || [0, 'admin'])[1] }); },
     signIn: async () => {}, signOut: async () => {},
-    getIndex: () => fetch('data/index.json').then(r => r.json()),
+    getLibrary: () => fetch('data/library.json').then(r => r.ok ? r.json() : null).catch(() => null),
+    putLibrary: async () => {},
+    getIndex: (doc = '_index') => fetch(`data/${doc === '_index' ? 'index' : 'index' + doc.slice(6)}.json`).then(r => r.ok ? r.json() : null),
+    setBookAccess: async () => {},
     getLesson: lid => fetch(`data/${lid}.json`).then(r => { if (!r.ok) throw new Error(lid + ' 데이터가 없습니다'); return r.json(); }),
     pageUrl: async p => `pages/p${p}.webp`,
     async loadUser() {
