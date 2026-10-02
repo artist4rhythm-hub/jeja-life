@@ -5,7 +5,7 @@
 import { createBackend } from './backend.js';
 import { editImage } from './imgedit.js';
 import { initBible, openRef as bibleOpen, linkRefs, loadBooks } from './bible.js';
-import { initTTS } from './tts.js';
+import { initTTS, device } from './tts.js';
 let B = null;
 (() => {
 'use strict';
@@ -696,7 +696,7 @@ $('#tabbar').addEventListener('click', e => {
 });
 $$('[data-close]').forEach(b => b.addEventListener('click', closeSheets));
 $('#btn-panel').addEventListener('click', () => document.body.classList.contains('show-panel') ? closeSheets() : openPanel());
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideBar(); closeNote(); $('#modal').hidden = true; $('#lightbox').hidden = true; $('#ttsm').hidden = true; } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideBar(); closeNote(); $('#modal').hidden = true; $('#lightbox').hidden = true; $('#ttsm').hidden = true; $('#inst').hidden = true; } });
 
 /* 글자 크기 */
 const FS = [15, 16, 17, 18, 20, 22];
@@ -1206,6 +1206,58 @@ $('#lib').addEventListener('change', async e => {
 [$('#btn-lib'), $('#btn-lib-m'), $('#nav-lib')].forEach(b => b.addEventListener('click', showLibrary));
 $('.top .brand').addEventListener('click', () => { if (!document.body.classList.contains('lib-on') && st.me) showLibrary(); });
 
+
+/* ---------------- 앱으로 설치하기 안내 ---------------- */
+let installEvt = null;
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (!$('#inst').hidden) renderInstall(); });
+addEventListener('appinstalled', () => { installEvt = null; toast('설치했습니다. 홈 화면의 「제삶」 아이콘으로 여세요'); $('#inst').hidden = true; });
+const SHARE = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px" aria-label="공유"><path d="M12 3v12M8 7l4-4 4 4"></path><path d="M5 11v9h14v-9"></path></svg>';
+const INSTALL_GUIDE = [
+  { os: ['iphone', 'ipad'], title: '아이폰 · 아이패드', html: `
+    <ol>
+      <li><b>Safari</b>로 이 앱 주소를 엽니다. (카카오톡 안에서 열렸다면 오른쪽 아래 <b>⋯ → 다른 브라우저로 열기</b> 또는 <b>Safari로 열기</b>)</li>
+      <li>화면 아래(아이패드는 위쪽 오른쪽)의 <b>공유 버튼 ${SHARE}</b>을 누릅니다.</li>
+      <li>목록을 위로 밀어 <b>‘홈 화면에 추가’</b>를 누릅니다. 안 보이면 맨 아래 <b>‘작업 편집…’</b>에서 추가할 수 있습니다.</li>
+      <li>이름이 <b>제삶</b>인지 확인하고 오른쪽 위 <b>추가</b>를 누릅니다.</li>
+      <li>홈 화면의 <b>제삶</b> 아이콘으로 열고, 처음 한 번 Google 로그인을 합니다.</li>
+    </ol>
+    <p class="tip">아이폰의 Chrome에서도 주소창 오른쪽 공유 버튼 → ‘홈 화면에 추가’로 할 수 있지만, Safari가 가장 확실합니다.</p>` },
+  { os: ['android'], title: '안드로이드 폰·태블릿 (갤럭시 등)', html: `
+    <ol>
+      <li><b>Chrome</b>으로 이 앱 주소를 엽니다.</li>
+      <li>위의 <b>[지금 설치하기]</b> 버튼이 보이면 누르고 <b>설치</b>를 누르면 끝입니다.</li>
+      <li>버튼이 없으면 오른쪽 위 <b>⋮</b> → <b>‘홈 화면에 추가’</b>(또는 <b>‘앱 설치’</b>) → <b>설치</b>를 누릅니다.</li>
+      <li>홈 화면에 생긴 <b>제삶</b> 아이콘으로 엽니다.</li>
+    </ol>
+    <p class="tip">삼성 인터넷: 아래쪽 <b>≡ 메뉴</b> → <b>‘현재 페이지 추가’</b> → <b>‘홈 화면’</b>.</p>` },
+  { os: ['mac'], title: '맥 (MacBook · iMac)', html: `
+    <ol>
+      <li><b>Chrome</b>: 주소창 오른쪽 끝의 <b>설치 아이콘(모니터에 ↓ 모양)</b>을 누르고 <b>설치</b>. 아이콘이 없으면 <b>⋮ → 전송, 저장, 공유 → 페이지를 앱으로 설치…</b></li>
+      <li><b>Safari</b>(macOS 14 이상): 위쪽 메뉴 <b>파일 → Dock에 추가…</b> → <b>추가</b>.</li>
+      <li><b>Edge</b>: <b>⋯ → 앱 → 이 사이트를 앱으로 설치</b>.</li>
+      <li>Dock이나 Launchpad의 <b>제삶</b> 아이콘으로 엽니다.</li>
+    </ol>` },
+  { os: ['windows', 'chromebook', 'other'], title: '윈도우 PC · 크롬북', html: `
+    <ol>
+      <li><b>Chrome</b>: 주소창 오른쪽 끝의 <b>설치 아이콘(모니터에 ↓ 모양)</b> → <b>설치</b>. 없으면 <b>⋮ → 전송, 저장, 공유 → 페이지를 앱으로 설치…</b></li>
+      <li><b>Edge</b>: <b>⋯ → 앱 → 이 사이트를 앱으로 설치</b> → <b>설치</b>.</li>
+      <li>시작 메뉴나 작업 표시줄의 <b>제삶</b> 아이콘으로 엽니다. (작업 표시줄에 고정하면 편합니다)</li>
+    </ol>` }
+];
+function renderInstall() {
+  const d = device();
+  $('#inst-dev').textContent = `지금 기기: ${d.label}`;
+  const ios = d.os === 'iphone' || d.os === 'ipad';
+  $('#inst-now').innerHTML = d.app ? '<p class="inst-ok">✓ 이미 앱으로 설치해서 열고 있습니다.</p>'
+    : installEvt ? '<button type="button" class="primary big" id="inst-go">지금 설치하기</button>'
+    : (ios && d.br !== 'Safari' ? '<p class="tts-tip">아이폰·아이패드는 <b>Safari</b>에서 설치하는 것이 가장 확실합니다. 이 주소를 Safari로 열어 주세요.</p>' : '');
+  $('#inst-guide').innerHTML = INSTALL_GUIDE.map(g => `<details ${g.os.includes(d.os) ? 'open' : ''}><summary>${g.title}${g.os.includes(d.os) ? ' <span class="here">지금 기기</span>' : ''}</summary>${g.html}</details>`).join('');
+}
+document.addEventListener('click', e => { if (e.target.closest('[data-install]')) { renderInstall(); $('#inst').hidden = false; } });
+$('#inst').addEventListener('click', async e => {
+  if (e.target.id === 'inst' || e.target.closest('#inst-close')) { $('#inst').hidden = true; return; }
+  if (e.target.closest('#inst-go') && installEvt) { installEvt.prompt(); const r = await installEvt.userChoice.catch(() => null); installEvt = null; if (r && r.outcome !== 'accepted') renderInstall(); }
+});
 /* ---------------- 음성 듣기 ---------------- */
 function setupTTS() {
   if (tts) return;

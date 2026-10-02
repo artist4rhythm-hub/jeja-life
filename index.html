@@ -50,6 +50,7 @@
       <span class="grow"></span>
       <button type="button" class="acct-btn" id="btn-people" hidden>사용자 관리</button>
       <button type="button" class="acct-btn" id="btn-admin" hidden>교재 올리기</button>
+      <button type="button" class="acct-btn" data-install>앱 설치</button>
       <button type="button" class="acct-btn" id="btn-logout" hidden>로그아웃</button>
     </div>
   </aside>
@@ -81,7 +82,8 @@
   </aside>
 </div>
 
- <section id="lib" class="lib" aria-label="서재" hidden><div class="lib-wrap" id="lib-body"></div></section>
+ <section id="lib" class="lib" aria-label="서재" hidden><div class="lib-wrap" id="lib-body"></div>
+  <button type="button" class="lib-install" data-install><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"></rect><path d="M12 7v7M9 11l3 3 3-3"></path></svg><span>앱으로 설치</span></button></section>
 
 <nav id="tabbar" class="only-mob" aria-label="하단 메뉴">
   <button type="button" data-tab="toc"><i>☰</i>목차</button>
@@ -239,6 +241,16 @@
   </div>
 </div>
 
+<div id="inst" class="modal" hidden>
+  <div class="modal-box wide inst-box" role="dialog" aria-label="앱으로 설치하기">
+    <div class="pp-head"><h3>📲 내 기기에 앱으로 설치하기</h3><button type="button" class="icon-btn" id="inst-close" aria-label="닫기">✕</button></div>
+    <p class="muted" id="inst-dev"></p>
+    <div id="inst-now"></div>
+    <div class="tts-guide" id="inst-guide"></div>
+    <p class="muted small">설치하면 홈 화면(또는 Dock·작업 표시줄)에 <b>제삶</b> 아이콘이 생기고, 주소창 없이 앱처럼 전체 화면으로 열립니다. 앱 스토어를 거치지 않고, 따로 용량을 차지하지 않습니다. 로그인과 내 표시는 그대로 이어집니다.</p>
+  </div>
+</div>
+
 <div id="gate" class="gate">
   <div class="gate-box">
     <div class="gate-logo">제자의 삶</div>
@@ -248,6 +260,7 @@
       <button type="button" class="primary big" id="btn-login">Google 계정으로 로그인</button>
       <p class="muted small">등록된 사람만 교재를 볼 수 있습니다.</p>
     </div>
+    <button type="button" class="gate-install" data-install><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"></rect><path d="M12 7v7M9 11l3 3 3-3"></path></svg> 내 기기에 앱으로 설치하기</button>
     <div data-g="nomember" hidden>
       <p><b id="g-name"></b> 님은 <span id="g-why">아직 등록되지 않았습니다.</span></p>
       <p class="muted small">관리자에게 아래 <b>구글 메일 주소</b>로 등록을 요청하세요. 등록되면 다시 로그인만 하면 됩니다.</p>
