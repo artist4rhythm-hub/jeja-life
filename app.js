@@ -178,10 +178,11 @@ function heroHTML(L) {
   if (!L.cover) return '';
   const epi = L.cover.blocks.find(b => b.t === 'indent'), cite = L.cover.blocks.find(b => b.t === 'cite');
   const h1 = L.cover.blocks.find(b => b.t === 'h1');
+  const ps = L.cover.blocks.filter(b => b.t === 'p'); const sub = ps.find(b => !epi || L.cover.blocks.indexOf(b) < L.cover.blocks.indexOf(epi)); const note = ps.find(b => b !== sub);
   const no = lessonNo(L);
   const title = no ? L.title : plain(h1 ? h1.text : L.title);
   return `<header class="hero" data-page="${L.cover.blocks[0].page}">${no ? `<div class="no" aria-hidden="true">${no}</div>` : `<div class="muted" style="font-size:13px">${esc(L.title)}</div>`}
-    <h1>${esc(title)}</h1>${epi ? `<p class="epi">${inline(epi.text)}</p>` : ''}${cite ? `<p class="epi-cite">${esc(cite.text)}</p>` : ''}</header>`;
+    <h1 data-trid="${h1 ? h1.id : ''}">${esc(title)}</h1>${sub ? `<p class="hero-sub" data-trid="${sub.id}">${inline(sub.text)}</p>` : ''}${epi ? `<p class="epi" data-trid="${epi.id}">${inline(epi.text)}</p>` : ''}${cite ? `<p class="epi-cite" data-trid="${cite.id}">${esc(cite.text)}</p>` : ''}${note ? `<p class="hero-note" data-trid="${note.id}">${inline(note.text)}</p>` : ''}</header>`;
 }
 function extraHTML(u) {
   const list = Store.atts().filter(a => a.uid === u.id);
@@ -232,7 +233,7 @@ function renderReader() {
   if (tts) tts.rerendered();
   $('#top-lesson').textContent = (lessonNo(L) ? L.no + '과 ' : '') + L.title;
   $('#top-book').textContent = curBook().short || curBook().title;
-  applyMarks(); hydrateImages(r); observeBlocks();
+  applyMarks(); hydrateImages(r); observeBlocks(); applyTr();
   const chip = $('.chips .on', r); if (chip) chip.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
 const short = t => { const s = plain(t).replace(/[.?!]$/, ''); return s.length > 13 ? s.slice(0, 12) + '…' : s; };
@@ -696,7 +697,7 @@ $('#tabbar').addEventListener('click', e => {
 });
 $$('[data-close]').forEach(b => b.addEventListener('click', closeSheets));
 $('#btn-panel').addEventListener('click', () => document.body.classList.contains('show-panel') ? closeSheets() : openPanel());
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideBar(); closeNote(); $('#modal').hidden = true; $('#lightbox').hidden = true; $('#ttsm').hidden = true; $('#inst').hidden = true; } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideBar(); closeNote(); $('#modal').hidden = true; $('#lightbox').hidden = true; $('#ttsm').hidden = true; $('#inst').hidden = true; $('#trm').hidden = true; $('#tre').hidden = true; } });
 
 /* 글자 크기 */
 const FS = [15, 16, 17, 18, 20, 22];
@@ -713,6 +714,7 @@ function classify(f) {
   const n = f.name;
   let m = n.match(/^index(?:_([a-z][a-z0-9]*))?\.json$/); if (m) return { kind: 'index', book: m[1] || null, label: '목차' + (m[1] ? ' · ' + m[1] : ''), order: 3 };
   m = n.match(/^([A-Z]\d\d)\.json$/); if (m) return { kind: 'lesson', lid: m[1], label: '본문 ' + m[1], order: 2 };
+  m = n.match(/^tr_([a-z]{2})_([A-Z]\d\d)\.json$/); if (m) return { kind: 'tr', lang: m[1], lid: m[2], label: `번역 ${(TRL[m[1]] || {}).ko || m[1]} ${m[2]}`, order: 4 };
   m = n.match(/^p(.+)\.webp$/); if (m) return { kind: 'page', page: m[1], label: '원본 ' + (m[1].match(/^([a-z][a-z0-9]*)_/) || ['', ''])[1] + ' ' + pageLabel(m[1]), order: 1 };
   return null;
 }
@@ -729,8 +731,8 @@ function addUplFiles(files) {
   renderUpl();
 }
 function renderUpl() {
-  const n = { index: 0, lesson: 0, page: 0 }; uplItems.forEach(x => n[x.kind]++);
-  $('#upl-sum').textContent = uplItems.length ? `목차 ${n.index} · 본문 ${n.lesson}과 · 원본 사진 ${n.page}쪽` : '아직 고른 파일이 없습니다';
+  const n = { index: 0, lesson: 0, page: 0, tr: 0 }; uplItems.forEach(x => n[x.kind]++);
+  $('#upl-sum').textContent = uplItems.length ? `목차 ${n.index} · 본문 ${n.lesson}과 · 원본 사진 ${n.page}쪽${n.tr ? ` · 번역 ${n.tr}개` : ''}` : '아직 고른 파일이 없습니다';
   $('#upl-list').innerHTML = uplItems.map(x => `<li><span>${esc(x.label)}</span><small>${esc(x.file.name)}</small><b class="${x.status === '완료' ? 'ok' : x.status.startsWith('실패') ? 'bad' : ''}">${esc(x.status)}</b></li>`).join('');
   $('#upl-go').disabled = !uplItems.length || uplItems.every(x => x.status === '완료');
 }
@@ -754,25 +756,28 @@ async function runUpload() {
   const pageBook = p => { const m = String(p).match(/^([a-z][a-z0-9]*)_/); return m ? m[1] : 'jeja'; };
   const pageLid = {}; Object.values(lessonsIn).forEach(L => (L.pages || []).forEach(p => pageLid[p] = L.id));
   const todo = uplItems.filter(x => x.status !== '완료' && !x.status.startsWith('실패'));
+  const trBooks = {};
   const one = async x => {
     x.status = '올리는 중'; renderUpl();
     try {
       if (x.kind === 'page') { const url = await readDataUrl(x.file); if (url.length > 890000) throw new Error('사진이 너무 큼'); await B.putPage(x.page, pageLid[x.page], url, metaOf(pageBook(x.page)).access); }
       if (x.kind === 'lesson') await B.putLesson(x.lid, lessonsIn[x.lid], metaOf(lidBook(x.lid)).access);
       if (x.kind === 'index') { const m = metaOf(x.bookId); await B.putIndex(indexIn[x.bookId], m.indexDoc, m.access); }
+      if (x.kind === 'tr') { const o = JSON.parse(await readText(x.file)); const bid = o.book || lidBook(x.lid); await B.putTr(x.lid, x.lang, o, metaOf(bid).access); (trBooks[bid] = trBooks[bid] || new Set()).add(x.lang); }
       x.status = '완료';
     } catch (e) { x.status = '실패: ' + (e.code === 'permission-denied' ? '관리자 권한 없음' : e.message); }
     renderUpl();
   };
-  for (const k of ['page', 'lesson', 'index']) {
+  for (const k of ['page', 'lesson', 'index', 'tr']) {
     const q = todo.filter(x => x.kind === k);
     while (q.length) await Promise.all(q.splice(0, 4).map(one));
   }
   const bad = uplItems.filter(x => x.status.startsWith('실패')).length;
   if (bad) { toast(`${bad}개를 올리지 못했습니다`); renderUpl(); return; }
-  // 2) 서재 목록에 교재 등록(이미 있으면 정보만 새로)
+  // 2) 서재 목록에 교재 등록(이미 있으면 정보만 새로) · 번역 언어 표시
   const ids = Object.keys(indexIn);
-  if (ids.length) {
+  Object.entries(trBooks).forEach(([bid, set]) => { const b = bookById(bid); if (b) b.langs = [...new Set([...(b.langs || []), ...set])]; });
+  if (ids.length || Object.keys(trBooks).length) {
     ids.forEach(id => { const m = metaOf(id); const i = st.library.findIndex(b => b.id === id); const entry = { ...(i >= 0 ? st.library[i] : {}), ...m }; delete entry.lessons;
       if (i < 0 && entry.seriesDefault) st.library.forEach(b => { if (seriesOf(b) === seriesOf(entry)) b.seriesDefault = false; });   // 새 판을 처음 올리면 그 판이 기본판
       if (i >= 0) st.library[i] = entry; else st.library.push(entry); });
@@ -1139,7 +1144,7 @@ async function openBook(id, lid = null, ui = 0, blockId = null, q = null) {
   if (!lid) { const p = Store.pref(posKey(id), null); if (p && ix.lessons.some(l => l.id === p.lid && l.ready)) { lid = p.lid; ui = p.ui; } else lid = firstReady(); }
   if (!lid) { toast('아직 읽을 수 있는 과가 없습니다'); return; }
   hideLibrary(); Store.setPref('lastBook', id);
-  $('#nav-book').textContent = bookLabel(b); $('#nav-book').title = bookLabel(b); updatePairBtn();
+  $('#nav-book').textContent = bookLabel(b); $('#nav-book').title = bookLabel(b); updatePairBtn(); $('#btn-tr').hidden = !trLangsOf().length;
   if (b && b.series) Store.setPref('ed_' + b.series, id);
   if (changed) st.lid = null;
   await openLesson(lid, ui, blockId, q);
@@ -1197,7 +1202,7 @@ $('#lib').addEventListener('change', async e => {
     const ix = await loadBookIndex(b.id); const ids = ix.lessons.filter(l => l.ready).map(l => l.id);
     await Promise.all(ids.map(loadLesson));
     const pages = [...new Set(ids.flatMap(id => st.lessons[id].pages || []))];
-    await B.setBookAccess(b.indexDoc || '_index', ids, pages, v, (n, t) => { $('#toast').textContent = `공개 대상 바꾸는 중… ${n}/${t}`; $('#toast').hidden = false; });
+    await B.setBookAccess(b.indexDoc || '_index', ids, pages, v, (n, t) => { $('#toast').textContent = `공개 대상 바꾸는 중… ${n}/${t}`; $('#toast').hidden = false; }, b.langs || []);
     b.access = v; await B.putLibrary(st.library);
     toast(`「${b.title}」 → ${label}`); renderLibrary();
   } catch (err) { toast('바꾸지 못했습니다: ' + (err.code || err.message)); sel.value = b.access || 'all'; }
@@ -1257,6 +1262,139 @@ document.addEventListener('click', e => { if (e.target.closest('[data-install]')
 $('#inst').addEventListener('click', async e => {
   if (e.target.id === 'inst' || e.target.closest('#inst-close')) { $('#inst').hidden = true; return; }
   if (e.target.closest('#inst-go') && installEvt) { installEvt.prompt(); const r = await installEvt.userChoice.catch(() => null); installEvt = null; if (r && r.outcome !== 'accepted') renderInstall(); }
+});
+
+/* ---------------- 번역 보기 (영어·일본어·아랍어) ----------------
+ * 번역은 과마다 언어별 문서(lessons/{과}/tr/{언어})에 { t: { 블록ID: [문장별 번역…] } } 로 저장.
+ * 문장 나누기는 build 쪽(trlib.py)과 같은 규칙 → 문장 수가 맞으면 '문장마다', 아니면 그 블록만 '문단 아래'로 보여 줌. */
+const TRL = {
+  en: { ko: '영어', name: 'English', tag: 'EN', dir: 'ltr' },
+  ja: { ko: '일본어', name: '日本語', tag: 'JA', dir: 'ltr' },
+  ar: { ko: '아랍어', name: 'العربية', tag: 'AR', dir: 'rtl' }
+};
+const TR_PUNCT = '.?!…', TR_CLOSE = '"”’\')]」』';
+function splitSent(s) {
+  const out = []; let i = 0, start = 0; const n = s.length;
+  while (i < n) {
+    if (TR_PUNCT.includes(s[i])) {
+      let j = i; while (j < n && TR_PUNCT.includes(s[j])) j++; while (j < n && TR_CLOSE.includes(s[j])) j++;
+      if (j >= n || /\s/.test(s[j])) { while (j < n && /\s/.test(s[j])) j++; out.push(s.slice(start, j)); start = j; i = j; continue; }
+      i = j; continue;
+    }
+    i++;
+  }
+  if (start < n) out.push(s.slice(start));
+  const m = [];
+  out.forEach(seg => { if (m.length && (m[m.length - 1].trim().length <= 3 || /^[(\[]?\d+[.)]\s*$/.test(m[m.length - 1]))) m[m.length - 1] += seg; else m.push(seg); });
+  if (m.length > 1 && m[m.length - 1].trim().length <= 3) m[m.length - 2] += m.pop();
+  return m;
+}
+const trCache = {};
+const trLangsOf = () => (curBook().langs || []).filter(l => TRL[l]);
+const trOn = () => !!Store.pref('trOn', false) && trActive().length > 0;
+const trActive = () => { const have = trLangsOf(); return (Store.pref('trLangs', ['en']) || []).filter(l => have.includes(l)); };
+async function trLoad(lid, lang) {
+  const k = lid + '/' + lang; if (k in trCache) return trCache[k];
+  try { const o = await B.getTr(lid, lang); trCache[k] = o && o.t ? o.t : null; } catch (e) { console.warn('tr', e); trCache[k] = null; }
+  return trCache[k];
+}
+function trJoin(lang, arr) { return arr.map(x => String(x).trim()).filter(Boolean).join(lang === 'ja' ? '' : ' '); }
+function trClear(root) {
+  $$('.trb, .se', root).forEach(x => x.remove());
+  $$('.trrow', root).forEach(row => { while (row.firstChild) row.parentNode.insertBefore(row.firstChild, row); row.remove(); });
+  root.classList.remove('tr-side');
+}
+let trSeq = 0;
+async function applyTr() {
+  const r = $('#reader'); if (!r) return; const my = ++trSeq;
+  const btn = $('#btn-tr'); const have = trLangsOf();
+  btn.hidden = !have.length; btn.setAttribute('aria-pressed', trOn() ? 'true' : 'false');
+  $('#btn-tr .n').textContent = trOn() ? trActive().length : '';
+  trClear(r);
+  if (!trOn() || !cur()) return;
+  const langs = trActive(); const lid = st.lid;
+  const data = await Promise.all(langs.map(l => trLoad(lid, l)));
+  if (my !== trSeq || lid !== st.lid) return;
+  const pick = Store.pref('trMode', 'auto');
+  const mode = pick === 'auto' ? (r.clientWidth >= 560 + 220 * langs.length ? 'side' : 'para') : pick;
+  const admin = isAdmin() && B.kind === 'firebase';
+  const items = [...$$('#reader .blk[data-id]'), ...$$('#reader .hero [data-trid]')];
+  items.forEach(el => {
+    const id = el.dataset.id || el.dataset.trid; if (!id) return;
+    const per = langs.map((l, i) => [l, data[i] && data[i][id]]).filter(([, a]) => a && a.length);
+    if (!per.length) return;
+    const tx = el.dataset.id && $('.tx', el);
+    if (mode === 'sent' && tx) {
+      const parts = splitSent(tx.textContent);
+      if (per.every(([, a]) => a.length === parts.length)) { trSentences(tx, parts, per); return; }
+    }
+    const box = document.createElement('div'); box.className = 'trb'; box.dataset.for = id;
+    box.innerHTML = per.map(([l, a]) => `<p class="tl tl-${l}" lang="${l}" dir="${TRL[l].dir}"><b class="tg">${TRL[l].tag}</b>${esc(trJoin(l, a))}</p>`).join('') +
+      (admin ? `<button type="button" class="tr-edit" data-tr-edit="${id}" aria-label="번역 고치기">✎</button>` : '');
+    el.after(box);
+    if (mode === 'side' && el.dataset.id) {
+      const row = document.createElement('div'); row.className = 'trrow'; row.style.setProperty('--trn', per.length);
+      el.before(row); row.append(el, box);
+    }
+  });
+  r.classList.toggle('tr-side', mode === 'side');
+}
+function trSentences(tx, parts, per) {
+  // 문장 끝마다 빈 표시(span)를 끼우고, 번역은 CSS ::after 로 보여 줌 → 본문 글자(형광펜 위치)는 그대로
+  const ends = []; let acc = 0; parts.forEach(p => { acc += p.length; ends.push(acc); });
+  for (let k = ends.length - 1; k >= 0; k--) {          // 뒤에서부터 넣어야 앞쪽 위치가 안 바뀜
+    const w = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT); let pos = 0, node, hit = null;
+    while ((node = w.nextNode())) { const len = node.length; if (ends[k] <= pos + len) { hit = { node, off: ends[k] - pos }; break; } pos += len; }
+    if (!hit) continue;
+    const frag = document.createDocumentFragment();
+    per.forEach(([l, a]) => { const sp = document.createElement('span'); sp.className = `se tl-${l}`; sp.dataset.t = String(a[k]).trim(); sp.setAttribute('lang', l); sp.dir = TRL[l].dir; frag.append(sp); });
+    if (hit.off < hit.node.length) hit.node.splitText(hit.off).before(frag);
+    else { let t = hit.node; while (t.parentNode !== tx && !t.nextSibling && t.parentNode) t = t.parentNode; t.after(frag); }
+  }
+}
+/* 번역 설정 창 */
+function renderTrModal() {
+  const have = trLangsOf(); const act = Store.pref('trLangs', ['en']) || [];
+  $('#trm-on').checked = !!Store.pref('trOn', false);
+  $('#trm-langs').innerHTML = have.map(l => { const i = act.indexOf(l); return `<label class="trm-l"><input type="checkbox" data-l="${l}" ${i >= 0 ? 'checked' : ''}>
+    <span class="trm-n"><b>${TRL[l].ko} <span class="tl-${l}" lang="${l}">${TRL[l].name}</span></b><small>${{ en: '성경 인용: BSB', ja: '성경 인용: 구어역(口語訳)', ar: '표준 아랍어(푸스하) · 이집트·레바논·요르단·사우디 공통 · 성경: 반다이크역' }[l]}</small></span>
+    <span class="trm-o">${i >= 0 ? i + 1 : ''}</span></label>`; }).join('') || '<p class="muted">이 교재에는 아직 번역이 없습니다.</p>';
+  const m = Store.pref('trMode', 'auto'); $$('#trm-mode button').forEach(b => b.classList.toggle('on', b.dataset.m === m));
+}
+$('#btn-tr').addEventListener('click', () => { renderTrModal(); $('#trm').hidden = false; });
+$('#trm').addEventListener('click', e => {
+  if (e.target.id === 'trm' || e.target.closest('#trm-close')) { $('#trm').hidden = true; return; }
+  const mb = e.target.closest('#trm-mode [data-m]'); if (mb) { Store.setPref('trMode', mb.dataset.m); renderTrModal(); applyTr(); }
+});
+$('#trm').addEventListener('change', e => {
+  if (e.target.id === 'trm-on') { Store.setPref('trOn', e.target.checked); if (e.target.checked && !trActive().length) Store.setPref('trLangs', trLangsOf().slice(0, 1)); }
+  const l = e.target.dataset.l;
+  if (l) { let act = (Store.pref('trLangs', ['en']) || []).filter(x => x !== l); if (e.target.checked) act.push(l); Store.setPref('trLangs', act); if (act.length) Store.setPref('trOn', true); }
+  renderTrModal(); applyTr();
+});
+let trResizeT; addEventListener('resize', () => { if (Store.pref('trMode', 'auto') === 'auto' && trOn()) { clearTimeout(trResizeT); trResizeT = setTimeout(applyTr, 300); } });
+/* 관리자: 번역 고치기 */
+let trEditId = null;
+$('#reader').addEventListener('click', e => {
+  const b = e.target.closest('[data-tr-edit]'); if (!b) return;
+  trEditId = b.dataset.trEdit; const L = cur();
+  const blk = L.units.flatMap(u => u.blocks).find(x => x.id === trEditId);
+  const ko = blk ? splitSent(blockText(blk) || plain(blk.text || '')) : [];
+  $('#tre-body').innerHTML = trActive().map(l => { const a = (trCache[st.lid + '/' + l] || {})[trEditId] || [];
+    return `<fieldset class="tre-l"><legend>${TRL[l].ko}</legend>${a.map((t, i) => `<label><small>${esc((ko[i] || '').trim())}</small><textarea data-l="${l}" data-i="${i}" dir="${TRL[l].dir}" rows="2">${esc(t)}</textarea></label>`).join('')}</fieldset>`; }).join('');
+  $('#tre').hidden = false;
+});
+$('#tre').addEventListener('click', async e => {
+  if (e.target.id === 'tre' || e.target.closest('#tre-cancel')) { $('#tre').hidden = true; return; }
+  if (!e.target.closest('#tre-save')) return;
+  const btn = $('#tre-save'); btn.disabled = true;
+  try {
+    const changed = new Set();
+    $$('#tre-body textarea').forEach(ta => { const l = ta.dataset.l, i = +ta.dataset.i; const t = trCache[st.lid + '/' + l]; if (t && t[trEditId] && t[trEditId][i] !== ta.value) { t[trEditId][i] = ta.value; changed.add(l); } });
+    for (const l of changed) await B.putTr(st.lid, l, { lid: st.lid, lang: l, book: st.book, t: trCache[st.lid + '/' + l] }, curBook().access || 'all');
+    $('#tre').hidden = true; applyTr(); toast(changed.size ? '번역을 고쳤습니다' : '바뀐 것이 없습니다');
+  } catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
+  finally { btn.disabled = false; }
 });
 /* ---------------- 음성 듣기 ---------------- */
 function setupTTS() {

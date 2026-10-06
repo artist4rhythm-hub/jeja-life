@@ -178,15 +178,20 @@ async function FirebaseBackend(config) {
     // access: 'all'(모든 사용자) | 'staff'(강사·관리자만) — 보안 규칙이 이 값으로 읽기를 막음
     putIndex: (obj, doc = '_index', access = 'all') => F.setDoc(d('lessons', doc), { json: JSON.stringify(obj), access, at: Date.now() }),
     putLesson: (lid, obj, access = 'all') => F.setDoc(d('lessons', lid), { json: JSON.stringify(obj), access, at: Date.now() }),
+    // 번역: lessons/{과}/tr/{언어} { json, access }
+    async getTr(lid, lang) { try { const x = await F.getDoc(d('lessons', lid, 'tr', lang)); return x.exists() ? JSON.parse(x.data().json) : null; } catch (e) { if (e.code === 'permission-denied') return null; throw e; } },
+    putTr: (lid, lang, obj, access = 'all') => F.setDoc(d('lessons', lid, 'tr', lang), { json: JSON.stringify(obj), access, at: Date.now() }),
     putPage: (p, lid, dataUrl, access = 'all') => { pageCache.delete(p); return F.setDoc(d('pages', 'p' + p), { lid: lid || '', img: dataUrl, access, at: Date.now() }); },
     // 관리자: 교재 공개 대상 바꾸기 (목차·본문·원본 사진 문서에 모두 표시)
-    async setBookAccess(indexDoc, lids, pages, access, onStep) {
+    async setBookAccess(indexDoc, lids, pages, access, onStep, langs = []) {
       const ids = [['lessons', indexDoc], ...lids.map(l => ['lessons', l]), ...pages.map(p => ['pages', 'p' + p])];
+      const trIds = lids.flatMap(l => langs.map(g => [l, g]));
       let n = 0;
       for (let i = 0; i < ids.length; i += 10) {
         await Promise.all(ids.slice(i, i + 10).map(([c, id]) => F.updateDoc(d(c, id), { access }).catch(e => { if (e.code !== 'not-found') throw e; })));
         n = Math.min(ids.length, i + 10); onStep && onStep(n, ids.length);
       }
+      await Promise.all(trIds.map(([l, g]) => F.updateDoc(d('lessons', l, 'tr', g), { access }).catch(e => { if (e.code !== 'not-found') throw e; })));
     }
   };
 }
@@ -205,6 +210,8 @@ function LocalBackend() {
     putLibrary: async () => {},
     getIndex: (doc = '_index') => fetch(`data/${doc === '_index' ? 'index' : 'index' + doc.slice(6)}.json`).then(r => r.ok ? r.json() : null),
     setBookAccess: async () => {},
+    getTr: (lid, lang) => fetch(`data/tr/tr_${lang}_${lid}.json`).then(r => r.ok ? r.json() : null).catch(() => null),
+    putTr: async () => {},
     getLesson: lid => fetch(`data/${lid}.json`).then(r => { if (!r.ok) throw new Error(lid + ' 데이터가 없습니다'); return r.json(); }),
     pageUrl: async p => `pages/p${p}.webp`,
     async loadUser() {
