@@ -4,7 +4,7 @@
  */
 import { createBackend } from './backend.js';
 import { editImage } from './imgedit.js';
-import { initBible, openRef as bibleOpen, linkRefs, loadBooks } from './bible.js';
+import { initBible, openRef as bibleOpen, linkRefs, loadBooks, setBibleOpts } from './bible.js';
 import { initTTS, device, say, stopSay, VLANG, AR_C, arCountry, setArCountry, arHas, pickVoice, voiceLabel } from './tts.js';
 let B = null;
 (() => {
@@ -643,7 +643,13 @@ function setPanelTab(p) { $$('.ptabs button').forEach(b => b.classList.toggle('o
 $('.ptabs').addEventListener('click', e => { const b = e.target.closest('[data-p]'); if (!b) return; setPanelTab(b.dataset.p); setOrig(b.dataset.p === 'orig' || b.dataset.p === 'bible'); });
 /* 성경 패널 */
 let bibleReady = false;
-function ensureBible() { if (bibleReady) return; bibleReady = true; initBible($('#bible')); bibleOpen('요 3:16'); }
+function ensureBible() { if (bibleReady) return; bibleReady = true; initBible($('#bible')); syncBible(); bibleOpen('요 3:16'); }
+/* 성경 탭: 교재에 번역이 있는 언어(일본어·아랍어)의 성경을 함께 보여 주고, 절을 누르면 그 나라 목소리로 읽기 */
+function syncBible() {
+  const all = [...new Set((st.library || []).flatMap(b => b.langs || []))];
+  setBibleOpts({ langs: all, compare: trOn() ? trActive() : [],
+    speak: (l, text, done) => { const r = say([text], l, { rate: Store.pref('ttsRate', 1), onDone: done }); if (!r) { done(); toast('이 브라우저는 소리로 읽기를 지원하지 않습니다'); } } });
+}
 function openBible(ref) {
   setPanelTab('bible'); setOrig(true);
   if (isMob() || matchMedia('(max-width:1199px)').matches) { openPanel(); tabOn('bible'); }
@@ -789,14 +795,17 @@ async function runUpload() {
   const pageBook = p => { const m = String(p).match(/^([a-z][a-z0-9]*)_/); return m ? m[1] : 'jeja'; };
   const pageLid = {}; Object.values(lessonsIn).forEach(L => (L.pages || []).forEach(p => pageLid[p] = L.id));
   const todo = uplItems.filter(x => x.status !== '완료' && !x.status.startsWith('실패'));
-  const trBooks = {};
+  const trBooks = {}; let keptEd = 0;
   const one = async x => {
     x.status = '올리는 중'; renderUpl();
     try {
       if (x.kind === 'page') { const url = await readDataUrl(x.file); if (url.length > 890000) throw new Error('사진이 너무 큼'); await B.putPage(x.page, pageLid[x.page], url, metaOf(pageBook(x.page)).access); }
       if (x.kind === 'lesson') await B.putLesson(x.lid, lessonsIn[x.lid], metaOf(lidBook(x.lid)).access);
       if (x.kind === 'index') { const m = metaOf(x.bookId); await B.putIndex(indexIn[x.bookId], m.indexDoc, m.access); }
-      if (x.kind === 'tr') { const o = JSON.parse(await readText(x.file)); const bid = o.book || lidBook(x.lid); await B.putTr(x.lid, x.lang, o, metaOf(bid).access); (trBooks[bid] = trBooks[bid] || new Set()).add(x.lang); }
+      if (x.kind === 'tr') { const o = JSON.parse(await readText(x.file)); const bid = o.book || lidBook(x.lid);
+        // 앱에서 ✎로 고친 문단은 새 파일로 덮어쓰지 않고 그대로 둠
+        try { const ex = await B.getTr(x.lid, x.lang); if (ex && ex.ed && ex.t) { o.ed = ex.ed; Object.keys(ex.ed).forEach(id => { if (ex.t[id]) { o.t[id] = ex.t[id]; keptEd++; } }); } } catch (e) {}
+        await B.putTr(x.lid, x.lang, o, metaOf(bid).access); delete trCache[x.lid + '/' + x.lang]; (trBooks[bid] = trBooks[bid] || new Set()).add(x.lang); }
       x.status = '완료';
     } catch (e) { x.status = '실패: ' + (e.code === 'permission-denied' ? '관리자 권한 없음' : e.message); }
     renderUpl();
@@ -816,7 +825,7 @@ async function runUpload() {
       if (i >= 0) st.library[i] = entry; else st.library.push(entry); });
     try { await B.putLibrary(st.library); } catch (e) { toast('서재 목록을 저장하지 못했습니다: ' + (e.code || e.message)); return; }
   }
-  toast('교재를 올렸습니다'); st.lessons = {}; st.indexes = {}; await loadLibrary();
+  toast('교재를 올렸습니다' + (keptEd ? ` · 앱에서 고친 번역 ${keptEd}곳은 그대로 두었습니다` : '')); st.lessons = {}; st.indexes = {}; await loadLibrary();
   $('#upl').hidden = true; await showLibrary();
 }
 function openUploader() { uplItems = []; renderUpl(); $('#upl').hidden = false; }
@@ -1359,13 +1368,13 @@ function splitSent(s) {
   if (m.length > 1 && m[m.length - 1].trim().length <= 3) m[m.length - 2] += m.pop();
   return m;
 }
-const trCache = {};
+const trCache = {}, trEd = {};   // trEd: 관리자가 앱에서 ✎로 고친 문단 { blockId: 시각 } — 번역 파일을 다시 올려도 지켜 줌
 const trLangsOf = () => (curBook().langs || []).filter(l => TRL[l]);
 const trOn = () => !!Store.pref('trOn', false) && trActive().length > 0;
 const trActive = () => { const have = trLangsOf(); return (Store.pref('trLangs', ['en']) || []).filter(l => have.includes(l)); };
 async function trLoad(lid, lang) {
   const k = lid + '/' + lang; if (k in trCache) return trCache[k];
-  try { const o = await B.getTr(lid, lang); trCache[k] = o && o.t ? o.t : null; } catch (e) { console.warn('tr', e); trCache[k] = null; }
+  try { const o = await B.getTr(lid, lang); trCache[k] = o && o.t ? o.t : null; trEd[k] = (o && o.ed) || {}; } catch (e) { console.warn('tr', e); trCache[k] = null; }
   return trCache[k];
 }
 function trJoin(lang, arr) { return arr.map(x => String(x).trim()).filter(Boolean).join(lang === 'ja' ? '' : ' '); }
@@ -1377,6 +1386,7 @@ function trClear(root) {
 let trSeq = 0;
 async function applyTr() {
   const r = $('#reader'); if (!r) return; const my = ++trSeq;
+  if (bibleReady) syncBible();
   const btn = $('#btn-tr'); const have = trLangsOf();
   btn.hidden = !have.length; btn.setAttribute('aria-pressed', trOn() ? 'true' : 'false');
   $('#btn-tr .n').textContent = trOn() ? trActive().length : '';
@@ -1500,7 +1510,8 @@ $('#tre').addEventListener('click', async e => {
   try {
     const changed = new Set();
     $$('#tre-body textarea').forEach(ta => { const l = ta.dataset.l, i = +ta.dataset.i; const t = trCache[st.lid + '/' + l]; if (t && t[trEditId] && t[trEditId][i] !== ta.value) { t[trEditId][i] = ta.value; changed.add(l); } });
-    for (const l of changed) await B.putTr(st.lid, l, { lid: st.lid, lang: l, book: st.book, t: trCache[st.lid + '/' + l] }, curBook().access || 'all');
+    for (const l of changed) { const k = st.lid + '/' + l; const ed = trEd[k] = trEd[k] || {}; ed[trEditId] = Date.now();
+      await B.putTr(st.lid, l, { lid: st.lid, lang: l, book: st.book, t: trCache[k], ed }, curBook().access || 'all'); }
     $('#tre').hidden = true; applyTr(); toast(changed.size ? '번역을 고쳤습니다' : '바뀐 것이 없습니다');
   } catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
   finally { btn.disabled = false; }

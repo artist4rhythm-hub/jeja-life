@@ -743,3 +743,15 @@ body:not(.lib-on) #btn-admm{display:none!important}
   .bkm-row{grid-template-columns:auto minmax(0,1fr);grid-template-areas:"n n" "d a";row-gap:8px}
   .bkm-name{grid-area:n}.bkm-def{grid-area:d;justify-content:flex-start;min-width:92px}.bkm-accw{grid-area:a}
 }
+
+/* ===== v0.19: 성경 탭 일본어·아랍어 ===== */
+.bb-vers .xl[lang=ar]{font-family:'Noto Naskh Arabic',serif}
+.bb-vers .xl[lang=ja]{font-family:'Noto Sans JP',sans-serif}
+.bv.xl-ja,.cmp .xl-ja{font-family:'Noto Sans JP',sans-serif}
+.bv.xl-ar,.cmp .xl-ar{font-family:'Noto Naskh Arabic','Geeza Pro',serif;text-align:right;line-height:1.95;font-size:1.06em}
+.bv.xl-ar sup{margin:0 0 0 6px}
+.cmp .xl-ja .lab,.cmp .xl-ar .lab{font-family:var(--sans)}
+.cmp .xl-ar .lab{margin:0 0 0 6px}
+[data-say]{cursor:pointer;border-radius:6px}
+@media (hover:hover){[data-say]:hover{background:color-mix(in srgb,var(--brand-soft) 55%,transparent)}}
+.bb-saying{background:color-mix(in srgb,var(--brand-soft) 90%,transparent)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--brand-soft) 90%,transparent)}

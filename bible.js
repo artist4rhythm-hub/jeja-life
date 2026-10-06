@@ -1,5 +1,5 @@
 /* 제자의 삶 — 성경 패널
- * 번역: 개역한글(1961·공개) · KJV(공개) · BSB(CC0) 앱 안에 포함
+ * 번역: 개역한글(1961·공개) · KJV(공개) · BSB(CC0) · 口語訳(1955·공개) · 반다이크역(1865·공개) 앱 안에 포함
  *       새번역·개역개정·공동번역(대한성서공회) · NIV(BibleGateway)는 패널 안에서 해당 사이트를 엶
  * 원어·사전: STEPBible.org (CC BY 4.0) — 히브리어(WLC)·헬라어(NA28 기준) 단어별 음역·스트롱 번호·뜻
  * 한국어 뜻·요약: AI가 사전 원문을 요약한 참고용 */
@@ -10,7 +10,19 @@ const BASE = 'bible/';
 let books = null, byId = {}, alias = [];
 const cacheT = {}, cacheO = {}, cacheLex = {};
 const st = { bk: 'JHN', ch: 1, v1: 0, v2: 0, mode: 'k', ext: null, searchLines: null };
-const MODES = [['k', '개역한글'], ['j', 'KJV'], ['b', 'BSB'], ['o', '원어'], ['c', '비교']];
+const MODES = [['k', '개역한글'], ['j', 'KJV'], ['b', 'BSB'], ['ja', '口語訳'], ['ar', 'فاندايك'], ['o', '원어'], ['c', '비교']];
+/* 번역 언어(일본어·아랍어) 성경 — 교재에 그 번역이 있을 때만 버튼이 보임 */
+const XL = { ja: { name: '口語訳', ko: '일본어 구어역', dir: 'ltr' }, ar: { name: 'فاندايك', ko: '아랍어 반다이크역', dir: 'rtl' } };
+let xlangs = [], cmpLangs = [], speakFn = null;
+const cacheX = {};
+export function setBibleOpts(o = {}) {
+  if (o.langs) xlangs = o.langs.filter(l => XL[l]);
+  if (o.compare) cmpLangs = o.compare.filter(l => XL[l]);
+  if (o.speak) speakFn = o.speak;
+  if (root) { root.querySelectorAll('.bb-vers [data-m]').forEach(b => { if (XL[b.dataset.m]) b.hidden = !xlangs.includes(b.dataset.m); });
+    if (XL[st.mode] && !xlangs.includes(st.mode)) st.mode = 'k'; }
+}
+async function xtext(l, bk) { const k = l + bk; return cacheX[k] || (cacheX[k] = await j(`${BASE}x/${l}/${bk}.json`)); }
 const EXT = [
   ['SAENEW', '새번역', 'bsk'], ['GAE', '개역개정', 'bsk'], ['COGNEW', '공동번역', 'bsk'], ['NIV', 'NIV', 'bg']
 ];
@@ -76,7 +88,7 @@ export function initBible(el) {
     <button type="submit" class="primary">찾기</button>
     <button type="button" class="ghost" id="bb-pick">책·장</button>
   </form>
-  <div class="bb-vers" role="tablist">${MODES.map(([k, n]) => `<button type="button" data-m="${k}">${n}</button>`).join('')}
+  <div class="bb-vers" role="tablist">${MODES.map(([k, n]) => `<button type="button" data-m="${k}" ${XL[k] ? `lang="${k}" class="xl" hidden` : ''}>${n}</button>`).join('')}
     <span class="bb-sep"></span>${EXT.map(([k, n]) => `<button type="button" class="ext" data-x="${k}">${n} ↗</button>`).join('')}</div>
   <div class="bb-head"><button type="button" class="icon-btn" id="bb-prev" aria-label="이전 장">‹</button><b id="bb-title"></b><button type="button" class="icon-btn" id="bb-next" aria-label="다음 장">›</button></div>
   <div class="bb-body" id="bb-body"></div>
@@ -87,7 +99,7 @@ export function initBible(el) {
   </div>
   <div class="bb-pick" id="bb-picker" hidden></div>
   <div class="bb-lex" id="bb-lex" hidden></div>
-  <p class="bb-credit">개역한글(1961)·KJV 공개 · BSB CC0 · 원어·사전 <a href="https://github.com/STEPBible/STEPBible-Data" target="_blank" rel="noopener">STEPBible.org</a> CC BY 4.0 · 한국어 뜻풀이는 AI 요약(참고용)</p>`;
+  <p class="bb-credit">개역한글(1961)·KJV·口語訳(1955)·반다이크역(1865) 공개 · BSB CC0 · 원어·사전 <a href="https://github.com/STEPBible/STEPBible-Data" target="_blank" rel="noopener">STEPBible.org</a> CC BY 4.0 · 한국어 뜻풀이는 AI 요약(참고용)</p>`;
   bodyEl = $('#bb-body', root); titleEl = $('#bb-title', root); extEl = $('#bb-ext', root); pickEl = $('#bb-picker', root); lexEl = $('#bb-lex', root);
 
   $('#bb-form', root).addEventListener('submit', e => { e.preventDefault(); query($('#bb-in', root).value.trim()); });
@@ -101,7 +113,8 @@ export function initBible(el) {
   $('#bb-ext-close', root).addEventListener('click', () => { st.ext = null; extEl.hidden = true; markVers(); });
   bodyEl.addEventListener('click', e => {
     const w = e.target.closest('.wt'); if (w) { showLex(w.dataset.s, w); return; }
-    const r = e.target.closest('[data-go]'); if (r) { const [bk, c, v] = r.dataset.go.split('.'); go(bk, +c, +v, +v); }
+    const r = e.target.closest('[data-go]'); if (r) { const [bk, c, v] = r.dataset.go.split('.'); go(bk, +c, +v, +v); return; }
+    const sy = e.target.closest('[data-say]'); if (sy && speakFn && getSelection().isCollapsed) { root.querySelectorAll('.bb-saying').forEach(x => x.classList.remove('bb-saying')); sy.classList.add('bb-saying'); speakFn(sy.dataset.say, sy.textContent.replace(/^\d+\s*/, '').replace(/^(口語訳|فاندايك|BSB)\s*/, ''), () => sy.classList.remove('bb-saying')); }
   });
   pickEl.addEventListener('click', e => {
     const b = e.target.closest('[data-b]'); if (b) { showPicker(b.dataset.b); return; }
@@ -147,6 +160,9 @@ async function render() {
   try {
     const T = (await text(st.bk))[st.ch - 1] || [];
     const O = (st.mode === 'o' || st.mode === 'c') ? ((await orig(st.bk))[st.ch - 1] || []) : null;
+    const xl = XL[st.mode] ? [st.mode] : st.mode === 'c' ? cmpLangs.filter(l => xlangs.includes(l)) : [];
+    const X = {}; for (const l of xl) { try { X[l] = (await xtext(l, st.bk))[st.ch - 1] || []; } catch (e) { X[l] = []; } }
+    const say = !!speakFn;
     const heb = !b.nt;
     const sel = v => st.v1 && v >= st.v1 && v <= st.v2;
     const rows = T.map((t, i) => {
@@ -157,13 +173,16 @@ async function render() {
       }
       if (st.mode === 'c') {
         const o = (O[i] || []).map(w => w[0]).join(' ');
-        return `<div class="${cls} cmp" data-v="${v}"><sup>${v}</sup><p><span class="lab">개역한글</span>${esc(t[0])}</p><p><span class="lab">KJV</span>${esc(t[1])}</p><p><span class="lab">BSB</span>${esc(t[2])}</p><p class="orig" dir="${heb ? 'rtl' : 'ltr'}" lang="${heb ? 'he' : 'grc'}"><span class="lab">원어</span>${esc(o)}</p></div>`;
+        const xs = xl.map(l => `<p class="xl-${l}" lang="${l}" dir="${XL[l].dir}" ${say ? `data-say="${l}"` : ''}><span class="lab">${XL[l].name}</span>${esc(X[l][i] || '')}</p>`).join('');
+        return `<div class="${cls} cmp" data-v="${v}"><sup>${v}</sup><p><span class="lab">개역한글</span>${esc(t[0])}</p><p><span class="lab">KJV</span>${esc(t[1])}</p><p ${say ? 'data-say="en"' : ''}><span class="lab">BSB</span>${esc(t[2])}</p>${xs}<p class="orig" dir="${heb ? 'rtl' : 'ltr'}" lang="${heb ? 'he' : 'grc'}"><span class="lab">원어</span>${esc(o)}</p></div>`;
       }
+      if (XL[st.mode]) { const l = st.mode; const tx = X[l][i]; return `<p class="${cls} xl-${l}" data-v="${v}" lang="${l}" dir="${XL[l].dir}" ${say && tx ? `data-say="${l}"` : ''}><sup>${v}</sup>${tx ? esc(tx) : '<span class="muted">(앞 절에 포함)</span>'}</p>`; }
       const k = { k: 0, j: 1, b: 2 }[st.mode];
-      return `<p class="${cls}" data-v="${v}"><sup>${v}</sup>${esc(t[k])}</p>`;
+      return `<p class="${cls}" data-v="${v}" ${say && st.mode === 'b' ? 'data-say="en"' : ''}><sup>${v}</sup>${esc(t[k])}</p>`;
     });
     bodyEl.innerHTML = rows.join('') || '<p class="muted">본문이 없습니다.</p>';
     if (st.mode === 'o') bodyEl.insertAdjacentHTML('afterbegin', '<p class="bb-tip">단어를 누르면 원어 사전(원문 + 한국어 요약)이 열립니다.</p>');
+    if (XL[st.mode] && say) bodyEl.insertAdjacentHTML('afterbegin', `<p class="bb-tip">${XL[st.mode].ko} · 절을 누르면 원어민 목소리로 읽어요.</p>`);
     const first = bodyEl.querySelector('.sel'); if (first) first.scrollIntoView({ block: 'center' }); else bodyEl.scrollTop = 0;
   } catch (e) { bodyEl.innerHTML = `<p class="muted">성경 본문을 불러오지 못했습니다. (${esc(e.message)})</p>`; }
 }
