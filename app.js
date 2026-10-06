@@ -265,8 +265,14 @@ function jumpTo(blockId, q) {
   if (q) { const tx = $('.tx', el); if (tx) wrapFind(tx, q); }
   el.scrollIntoView({ block: 'center' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
 }
+/* 한국어 본문(.tx) 글자 노드만 — '문장마다' 번역(.se) 글자는 빼고 셈 */
+function koNodes(tx) {
+  const w = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement && n.parentElement.closest('.se') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  const a = []; while (w.nextNode()) a.push(w.currentNode); return a;
+}
+function koText(tx) { return koNodes(tx).map(n => n.data).join(''); }
 function wrapFind(tx, q) {
-  const w = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT); const nodes = []; while (w.nextNode()) nodes.push(w.currentNode);
+  const nodes = koNodes(tx);
   nodes.forEach(n => { let k; while ((k = n.textContent.indexOf(q)) >= 0) { const mid = n.splitText(k); const rest = mid.splitText(q.length); const m = document.createElement('mark'); m.className = 'find'; mid.parentNode.insertBefore(m, mid); m.appendChild(mid); n = rest; } });
 }
 
@@ -300,17 +306,41 @@ const bar = $('#hlbar');
 let selSegs = null, editGid = null, lastPointer = 'mouse';
 
 function offsetIn(tx, node, off) { const r = document.createRange(); r.selectNodeContents(tx); try { r.setEnd(node, off); } catch (e) { return 0; } return r.toString().length; }
+/* 한국어 본문 글자 위치: '문장마다' 번역(.se)이 본문 사이에 끼어 있어도 한국어 글자만 셈 */
+function offsetKo(tx, node, off) {
+  const r = document.createRange(); r.selectNodeContents(tx); try { r.setEnd(node, off); } catch (e) { return 0; }
+  let acc = 0;
+  for (const n of koNodes(tx)) { if (n === node) return acc + off; if (r.isPointInRange(n, n.length)) acc += n.length; else break; }
+  return acc;
+}
+/* 번역 글자 고르기: 언어별·문장별로 나눠 저장 { block, tl:언어, k:문장 번호, s, e } */
+const trUnits = l => $$(`#reader .se.tl-${l}, #reader .trb .tl-${l} .ts`);
+function trSegments(R, startEl) {
+  const l = (startEl.className.match(/tl-(\w+)/) || [])[1]; if (!l) return null;
+  const segs = [];
+  trUnits(l).forEach(c => {
+    if (!R.intersectsNode(c)) return;
+    const t = c.textContent;
+    const s = c.contains(R.startContainer) ? offsetIn(c, R.startContainer, R.startOffset) : 0;
+    const e = c.contains(R.endContainer) ? offsetIn(c, R.endContainer, R.endOffset) : t.length;
+    if (e > s && t.slice(s, e).trim()) segs.push({ block: c.dataset.b, tl: l, k: +c.dataset.k, s, e, quote: t.slice(s, e) });
+  });
+  return segs.length ? { segs, rect: R.getBoundingClientRect() } : null;
+}
 function segmentsFromSelection() {
   const sel = getSelection(); if (!sel.rangeCount || sel.isCollapsed) return null;
   const R = sel.getRangeAt(0); const reader = $('#reader');
   if (!reader.contains(R.commonAncestorContainer)) return null;
+  const sn = R.startContainer.nodeType === 1 ? R.startContainer : R.startContainer.parentElement;
+  const trStart = sn && sn.closest('.se, .trb .tl');
+  if (trStart) return trSegments(R, trStart);          // 번역에서 시작한 선택 → 번역에 칠하기
   const segs = [];
   $$('.tx', reader).forEach(tx => {
     if (!R.intersectsNode(tx)) return;
-    const len = tx.textContent.length;
-    const s = tx.contains(R.startContainer) ? offsetIn(tx, R.startContainer, R.startOffset) : 0;
-    const e = tx.contains(R.endContainer) ? offsetIn(tx, R.endContainer, R.endOffset) : len;
-    if (e > s && tx.textContent.slice(s, e).trim()) segs.push({ block: tx.closest('[data-id]').dataset.id, s, e, quote: tx.textContent.slice(s, e) });
+    const text = koText(tx), len = text.length;
+    const s = tx.contains(R.startContainer) ? offsetKo(tx, R.startContainer, R.startOffset) : 0;
+    const e = tx.contains(R.endContainer) ? offsetKo(tx, R.endContainer, R.endOffset) : len;
+    if (e > s && text.slice(s, e).trim()) segs.push({ block: tx.closest('[data-id]').dataset.id, s, e, quote: text.slice(s, e) });
   });
   return segs.length ? { segs, rect: R.getBoundingClientRect() } : null;
 }
@@ -344,7 +374,7 @@ function caretAt(x, y) {
   if (document.caretPositionFromPoint) { const p = document.caretPositionFromPoint(x, y); return p && { node: p.offsetNode, off: p.offset }; }
   return null;
 }
-const inText = n => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return el && el.closest('#reader .tx'); };
+const inText = n => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return el && el.closest('#reader .tx, #reader .trb .ts'); };
 function drawStart(x, y) { const c = caretAt(x, y); if (!c || !inText(c.node)) return false; drawing = { a: c, moved: false }; bar.hidden = true; return true; }
 function drawMove(x, y) {
   if (!drawing) return; const c = caretAt(x, y); if (!c || !$('#reader').contains(c.node)) return;
@@ -388,7 +418,7 @@ addEventListener('pointerdown', e => { if (e.pointerType === 'pen') $('#pendock'
 
 function addMark(c, note) {
   if (!selSegs) return; const gid = uidGen('m'); const at = Date.now();
-  Store.addMarks(selSegs.map((s, i) => ({ id: gid + '-' + i, gid, lid: st.lid, block: s.block, s: s.s, e: s.e, c, note: i === 0 ? (note || '') : '', quote: s.quote, at })));
+  Store.addMarks(selSegs.map((s, i) => ({ id: gid + '-' + i, gid, lid: st.lid, block: s.block, ...(s.tl ? { tl: s.tl, k: s.k } : {}), s: s.s, e: s.e, c, note: i === 0 ? (note || '') : '', quote: s.quote, at })));
   getSelection().removeAllRanges(); hideBar(); applyMarks(); renderNotes();
   if (note) toast('메모를 저장했습니다');
 }
@@ -409,7 +439,7 @@ function openNote(gid, rect, edit) {
   const segs = Store.marks().filter(m => m.gid === gid); if (!segs.length) return;
   popGid = gid; hideBar();
   const quote = segs.map(x => x.quote).join(' … '), note = segs[0].note || '';
-  const q = $('.np-quote', pop); q.textContent = quote.length > 90 ? quote.slice(0, 90) + '…' : quote; q.className = 'np-quote c-' + segs[0].c;
+  const q = $('.np-quote', pop); q.textContent = quote.length > 90 ? quote.slice(0, 90) + '…' : quote; q.className = 'np-quote c-' + segs[0].c; q.dir = 'auto';
   popPhotos = (segs[0].photos || []).map(id => ({ id, url: photoCache.get(id) || null })); removedPhotos = [];
   $('.np-text', pop).textContent = note || (popPhotos.length ? '' : '아직 메모가 없습니다. 두 번 누르거나 [메모 쓰기]를 누르세요.');
   $('.np-text', pop).classList.toggle('empty', !note);
@@ -475,8 +505,8 @@ $('#np-in').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaK
 $('#reader').addEventListener('mousedown', e => { if (e.detail >= 2 && e.target.closest('mark.hl')) e.preventDefault(); });
 $('#reader').addEventListener('click', e => {
   if (e.target.closest('.vref')) return;
-  if (e.target.closest('.se') && trTap()) return;   // 번역 문장 누르기 = 소리로 읽기
   const m = e.target.closest('mark.hl'); if (!m) return;
+  const se0 = e.target.closest('.se'); if (se0 && !se0.contains(m)) return;   // 번역 문장(칠하지 않은 곳) 누르기 = 소리로 읽기
   const gid = m.dataset.gid, now = Date.now();
   if (lastTap.gid === gid && now - lastTap.t < 380) {           // 두 번 누름 → 바로 쓰기
     clearTimeout(tapT); lastTap = { gid: null, t: 0 }; getSelection().removeAllRanges();
@@ -496,9 +526,11 @@ $('#hl-note-edit').addEventListener('click', () => {
   $('#hl-memo-in').value = first ? first.note : ''; $('#hl-memo-in').focus();
 });
 
+function allText(el) { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); const a = []; while (w.nextNode()) a.push(w.currentNode); return a; }
+function trUnitEl(b, l, k) { const r = $('#reader'); return $(`.trb[data-for="${b}"] .tl-${l} .ts[data-k="${k}"]`, r) || $(`[data-id="${b}"] .se.tl-${l}[data-k="${k}"]`, r); }
 function unwrapAll(root) { $$('mark.hl', root).forEach(m => { const p = m.parentNode; while (m.firstChild) p.insertBefore(m.firstChild, m); m.remove(); p.normalize(); }); }
 function wrapOffsets(tx, s, e, cls, gid, title) {
-  const w = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT); const nodes = []; while (w.nextNode()) nodes.push(w.currentNode);
+  const nodes = tx.classList.contains('tx') ? koNodes(tx) : allText(tx);
   let pos = 0;
   nodes.forEach(n => {
     const a = pos, z = pos + n.length; pos = z;
@@ -512,7 +544,7 @@ function applyMarks() {
   const r = $('#reader'); unwrapAll(r);
   const notes = {}, photos = {}; Store.marks().forEach(m => { if (m.note) notes[m.gid] = m.note; if (m.photos && m.photos.length) photos[m.gid] = 1; });
   Store.marks().filter(m => m.lid === st.lid).forEach(m => {
-    const tx = $(`[data-id="${m.block}"] .tx`, r); if (!tx) return;
+    const tx = m.tl ? trUnitEl(m.block, m.tl, m.k) : $(`[data-id="${m.block}"] .tx`, r); if (!tx) return;   // 번역 표시는 그 번역이 화면에 있을 때만
     wrapOffsets(tx, m.s, m.e, `hl c-${m.c}${notes[m.gid] ? ' has-note' : ''}`, m.gid, notes[m.gid]);
   });
   new Set([...Object.keys(notes), ...Object.keys(photos)]).forEach(g => { const ms = $$(`mark.hl[data-gid="${g}"]`, r); if (ms.length) { const last = ms[ms.length - 1]; last.classList.add('note-end'); if (photos[g]) last.classList.add('has-photo'); } });
@@ -521,7 +553,7 @@ function applyMarks() {
 /* ---------------- 내 노트 ---------------- */
 function renderNotes() {
   const groups = {}; Store.marks().forEach(m => { (groups[m.gid] = groups[m.gid] || []).push(m); });
-  const items = Object.values(groups).map(g => ({ kind: 'mark', lid: g[0].lid, block: g[0].block, c: g[0].c, quote: g.map(x => x.quote).join(' … '), note: g[0].note, ph: (g[0].photos || []).length, at: g[0].at }));
+  const items = Object.values(groups).map(g => ({ kind: 'mark', lid: g[0].lid, block: g[0].block, c: g[0].c, tl: g[0].tl, quote: g.map(x => x.quote).join(' … '), note: g[0].note, ph: (g[0].photos || []).length, at: g[0].at }));
   Object.entries(Store.answers()).forEach(([id, a]) => items.push({ kind: 'ans', lid: id.slice(0, 3), block: id, note: a.t, at: a.at }));
   const byL = {}; items.forEach(i => (byL[i.lid] = byL[i.lid] || []).push(i));
   const order = st.index.lessons.map(l => l.id).filter(id => byL[id]);
@@ -532,7 +564,7 @@ function renderNotes() {
     const list = byL[lid].sort((a, b) => a.block < b.block ? -1 : a.block > b.block ? 1 : a.at - b.at);
     return `<div class="ngroup">${lessonNo(L) ? L.no + '과 ' : ''}${esc(L.title)} · ${list.length}</div>` + list.map(i => i.kind === 'ans'
       ? `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}"><span class="kind">내 답</span><br>${esc(i.note.slice(0, 120))}</button>`
-      : `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}"><q class="c-${i.c}">${esc(i.quote.length > 70 ? i.quote.slice(0, 70) + '…' : i.quote)}</q>${i.note ? esc(i.note) : ''}${i.ph ? ` <span class="kind">📷 ${i.ph}</span>` : ''}</button>`).join('');
+      : `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}">${i.tl && TRL[i.tl] ? `<span class="kind tlk tl-${i.tl}">${TRL[i.tl].tag}</span> ` : ''}<q class="c-${i.c}" dir="auto">${esc(i.quote.length > 70 ? i.quote.slice(0, 70) + '…' : i.quote)}</q>${i.note ? esc(i.note) : ''}${i.ph ? ` <span class="kind">📷 ${i.ph}</span>` : ''}</button>`).join('');
   }).join('')}</div>`;
 }
 $('#notes').addEventListener('click', e => { const b = e.target.closest('[data-jump]'); if (!b) return; closeSheets(); openLesson(b.dataset.lid, 0, b.dataset.jump); });
@@ -1068,7 +1100,7 @@ async function importEdition(fromId, toId) {
   const texts = new Map(); const tcache = (L, b) => { const k = b.id; if (!texts.has(k)) texts.set(k, blockText(b)); return texts.get(k); };
   const res = { marks: 0, answers: 0, done: 0, lost: [] };
   // 1) 형광펜·메모
-  const groups = {}; Store.marks().filter(m => m.lid && m.lid[0] === fb.prefix).forEach(m => (groups[m.gid] = groups[m.gid] || []).push(m));
+  const groups = {}; Store.marks().filter(m => m.lid && m.lid[0] === fb.prefix && !m.tl).forEach(m => (groups[m.gid] = groups[m.gid] || []).push(m));
   for (const segs of Object.values(groups)) {
     const first = segs[0]; const nlid = lmap[first.lid]; const out = [];
     if (nlid) {
@@ -1330,7 +1362,7 @@ async function applyTr() {
       if (per.every(([, a]) => a.length === parts.length)) { trSentences(tx, parts, per); return; }
     }
     const box = document.createElement('div'); box.className = 'trb'; box.dataset.for = id;
-    box.innerHTML = per.map(([l, a]) => `<p class="tl tl-${l}" lang="${l}" dir="${TRL[l].dir}"><b class="tg" data-l="${l}">${TRL[l].tag}</b>${a.map((x, k) => `<span class="ts" data-i="${k}">${esc(String(x).trim())}</span>`).join(l === 'ja' ? '' : ' ')}</p>`).join('') +
+    box.innerHTML = per.map(([l, a]) => `<p class="tl tl-${l}" lang="${l}" dir="${TRL[l].dir}"><b class="tg" data-l="${l}">${TRL[l].tag}</b>${a.map((x, k) => `<span class="ts" data-i="${k}" data-k="${k}" data-b="${id}">${esc(String(x).trim())}</span>`).join(l === 'ja' ? '' : ' ')}</p>`).join('') +
       (admin ? `<button type="button" class="tr-edit" data-tr-edit="${id}" aria-label="번역 고치기">✎</button>` : '');
     el.after(box);
     if (mode === 'side' && el.dataset.id) {
@@ -1340,16 +1372,17 @@ async function applyTr() {
   });
   r.classList.toggle('tr-side', mode === 'side');
   r.classList.toggle('tr-tap', trTap());
+  applyMarks();   // 번역에 칠한 형광펜·메모 다시 그리기
 }
 function trSentences(tx, parts, per) {
   // 문장 끝마다 빈 표시(span)를 끼우고, 번역은 CSS ::after 로 보여 줌 → 본문 글자(형광펜 위치)는 그대로
   const ends = []; let acc = 0; parts.forEach(p => { acc += p.length; ends.push(acc); });
   for (let k = ends.length - 1; k >= 0; k--) {          // 뒤에서부터 넣어야 앞쪽 위치가 안 바뀜
-    const w = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT); let pos = 0, node, hit = null;
-    while ((node = w.nextNode())) { const len = node.length; if (ends[k] <= pos + len) { hit = { node, off: ends[k] - pos }; break; } pos += len; }
+    let pos = 0, hit = null;
+    for (const node of koNodes(tx)) { const len = node.length; if (ends[k] <= pos + len) { hit = { node, off: ends[k] - pos }; break; } pos += len; }
     if (!hit) continue;
     const frag = document.createDocumentFragment();
-    per.forEach(([l, a]) => { const sp = document.createElement('span'); sp.className = `se tl-${l}`; sp.dataset.t = String(a[k]).trim(); sp.setAttribute('lang', l); sp.dir = TRL[l].dir; frag.append(sp); });
+    per.forEach(([l, a]) => { const sp = document.createElement('span'); sp.className = `se tl-${l}`; sp.textContent = String(a[k]).trim(); sp.dataset.k = k; sp.dataset.b = tx.closest('[data-id]').dataset.id; sp.setAttribute('lang', l); sp.dir = TRL[l].dir; frag.append(sp); });
     if (hit.off < hit.node.length) hit.node.splitText(hit.off).before(frag);
     else { let t = hit.node; while (t.parentNode !== tx && !t.nextSibling && t.parentNode) t = t.parentNode; t.after(frag); }
   }
@@ -1369,7 +1402,9 @@ function sayTr(el, parts, lang, partEls) {
 $('#reader').addEventListener('click', e => {
   if (!trTap() || !getSelection().isCollapsed) return;
   const t = e.target;
-  const se = t.closest('.se'); if (se) { const l = (se.className.match(/tl-(\w+)/) || [])[1]; if (l) sayTr(se, [se.dataset.t], l); return; }
+  const se = t.closest('.se'); const mk = t.closest('mark.hl');
+  if (mk && (!se || se.contains(mk))) return;          // 칠한 곳을 누르면 메모 (소리 X)
+  if (se) { const l = (se.className.match(/tl-(\w+)/) || [])[1]; if (l) sayTr(se, [se.textContent], l); return; }
   const ts = t.closest('.trb .ts'); if (ts) { const l = ts.closest('.tl').lang; sayTr(ts, [ts.textContent], l); return; }
   const tg = t.closest('.trb .tg[data-l]'); if (tg) { const p = tg.closest('.tl'); const parts = $$('.ts', p); sayTr(p, parts.map(x => x.textContent), tg.dataset.l, parts); }
 });
@@ -1456,7 +1491,7 @@ function setupTTS() {
     prepTr: l => trLoad(st.lid, l),
     trChunks(el, l) {
       const a = (trCache[st.lid + '/' + l] || {})[el.dataset.id]; if (!a || !a.length) return [];
-      const tx = $('.tx', el); const parts = tx ? splitSent(tx.textContent) : [];
+      const tx = $('.tx', el); const parts = tx ? splitSent(koText(tx)) : [];
       const offs = []; let acc = 0; parts.forEach(p => { offs.push([acc, acc + p.trimEnd().length]); acc += p.length; });
       const same = parts.length === a.length;
       return a.map((s, i) => ({ id: el.dataset.id, i, lang: l, say: String(s).trim(), s: same ? offs[i][0] : 0, e: same ? offs[i][1] : 0 })).filter(c => c.say);

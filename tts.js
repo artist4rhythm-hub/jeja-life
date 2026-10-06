@@ -139,9 +139,12 @@ function sentences(text) {
   }
   return out.filter(([s, e]) => text.slice(s, e).trim());
 }
+/* 한국어 글자만 ('문장마다' 번역 .se 는 빼고) */
+const koOnly = { acceptNode: n => n.parentElement && n.parentElement.closest('.se') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT };
+function koText(tx) { const w = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT, koOnly); let t = ''; while (w.nextNode()) t += w.currentNode.data; return t; }
 function chunksOf(el) {
   const tx = el.querySelector('.tx'); if (!tx) return [];
-  const id = el.dataset.id, text = tx.textContent, out = [];
+  const id = el.dataset.id, text = koText(tx), out = [];
   const ref = el.querySelector(':scope > .vref');
   if (ref) { const r = parseRef(ref.dataset.ref); const t = r && bookKo && bookKo[r.bk] ? `${bookKo[r.bk]} ${r.ch}장 ${r.v1 ? r.v1 + '절' : ''}${r.v2 && r.v2 !== r.v1 ? `에서 ${r.v2}절` : ''}` : speakify(ref.dataset.ref); out.push({ id, s: 0, e: 0, say: t }); }
   sentences(text).forEach(([s, e]) => { const say = speakify(text.slice(s, e)); if (say) out.push({ id, s, e, say }); });
@@ -151,7 +154,7 @@ function chunksOf(el) {
 /* ---------------- 본문 표시 ---------------- */
 const HL = typeof CSS !== 'undefined' && CSS.highlights && window.Highlight;
 function rangeFor(tx, s, e) {
-  const w = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT); let pos = 0, r = document.createRange(), started = false, n;
+  const w = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT, koOnly); let pos = 0, r = document.createRange(), started = false, n;
   while ((n = w.nextNode())) {
     const len = n.textContent.length;
     if (!started && s <= pos + len) { r.setStart(n, Math.max(0, s - pos)); started = true; }

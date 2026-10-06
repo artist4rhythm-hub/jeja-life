@@ -637,10 +637,10 @@ h1.blk + .trb,h2.blk + .trb,h3.blk + .trb,h4.blk + .trb{margin-top:-4px}
 .tr-edit:hover{opacity:1;color:var(--brand)}
 /* 문장마다: 문장 끝 표시(span) 아래에 번역 한 줄 */
 .se{display:block}
-.se::after{content:attr(data-t);display:block;font-size:.84em;line-height:1.55;margin:1px 0 6px;font-weight:400;font-style:normal;text-align:start}
-.se.tl-ar::after{direction:rtl;text-align:right;font-size:.93em;line-height:1.85}
-.se.tl-ja::after{font-size:.8em}
-h1 .se::after,h2 .se::after,h3 .se::after,h4 .se::after,h5 .se::after{font-size:.68em;margin-top:2px}
+.se{font-size:.84em;line-height:1.55;margin:1px 0 6px;font-weight:400;font-style:normal;text-align:start;text-indent:0;letter-spacing:normal}
+.se.tl-ar{direction:rtl;text-align:right;font-size:.93em;line-height:1.85}
+.se.tl-ja{font-size:.8em}
+h1 .se,h2 .se,h3 .se,h4 .se,h5 .se{font-size:.68em;margin-top:2px}
 /* 좌우 나란히 (넓은 화면) */
 .trrow{display:grid;grid-template-columns:minmax(0,1.15fr) repeat(var(--trn,1),minmax(0,1fr));gap:0 26px;align-items:start}
 .trrow > .blk{margin-bottom:12px}
@@ -677,11 +677,11 @@ h1 .se::after,h2 .se::after,h3 .se::after,h4 .se::after,h5 .se::after{font-size:
 .tr-side .trrow .pgmark{right:auto;left:-34px}
 
 /* ===== v0.16: 번역 소리로 읽기 · 듣기 언어 ===== */
-#reader.tr-tap .se::after,#reader.tr-tap .trb .ts,#reader.tr-tap .trb .tg{cursor:pointer}
+#reader.tr-tap .se,#reader.tr-tap .trb .ts,#reader.tr-tap .trb .tg{cursor:pointer}
 #reader.tr-tap .trb .ts{border-radius:4px;transition:background .15s}
-@media (hover:hover){#reader.tr-tap .trb .ts:hover,#reader.tr-tap .se:hover::after{background:color-mix(in srgb,currentColor 7%,transparent);border-radius:4px}}
+@media (hover:hover){#reader.tr-tap .trb .ts:hover,#reader.tr-tap .se:hover{background:color-mix(in srgb,currentColor 7%,transparent);border-radius:4px}}
 #reader.tr-tap .trb .tg::after{content:" 🔊";font-size:9px;letter-spacing:0}
-.se.tr-say::after,.se.tts-tr::after,.trb .ts.tr-say,.trb .ts.tts-tr{background:color-mix(in srgb,currentColor 14%,transparent);border-radius:4px;box-shadow:0 0 0 2px color-mix(in srgb,currentColor 14%,transparent)}
+.se.tr-say,.se.tts-tr,.trb .ts.tr-say,.trb .ts.tts-tr{background:color-mix(in srgb,currentColor 14%,transparent);border-radius:4px;box-shadow:0 0 0 2px color-mix(in srgb,currentColor 14%,transparent)}
 .trb .tl.tr-say{outline:2px solid color-mix(in srgb,currentColor 18%,transparent);outline-offset:3px;border-radius:4px}
 .ttsbar{flex-wrap:wrap}
 .ttsbar .tts-lang{font-size:12px;font-weight:800;letter-spacing:.04em;border:1px solid rgba(255,255,255,.3);min-width:40px;height:30px}
@@ -702,3 +702,7 @@ h1 .se::after,h2 .se::after,h3 .se::after,h4 .se::after,h5 .se::after{font-size:
 .trm-audio .ghost{justify-self:start;font-size:13px}
 .ttsm-lang{margin:4px 0 2px}
 .ttsm-arc{display:grid;gap:2px;margin:4px 0}
+
+/* ===== v0.17: 번역에도 형광펜·메모 ===== */
+.note .tlk{font-size:10px;font-weight:800;letter-spacing:.05em;border-radius:4px;padding:1px 5px;vertical-align:1px}
+.note .tlk.tl-en{background:var(--tl-en-bg)}.note .tlk.tl-ja{background:var(--tl-ja-bg)}.note .tlk.tl-ar{background:var(--tl-ar-bg)}
