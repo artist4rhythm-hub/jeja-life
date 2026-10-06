@@ -99,9 +99,11 @@
   <button type="button" id="tts-play" class="tts-play" aria-label="재생">▶</button>
   <button type="button" id="tts-next" aria-label="다음 문장">⏭</button>
   <div class="tts-info"><b id="tts-where"></b><small id="tts-voice"></small></div>
+  <button type="button" id="tts-lang" class="tts-lang" aria-label="읽는 언어" hidden>한</button>
   <button type="button" id="tts-rate" aria-label="읽는 속도">1×</button>
   <button type="button" id="tts-set" aria-label="목소리 설정">⚙</button>
   <button type="button" id="tts-close" aria-label="듣기 끄기">✕</button>
+  <p id="tts-cap" class="tts-cap" hidden></p>
 </div>
 
 <div id="ttsm" class="modal" hidden>
@@ -110,7 +112,9 @@
     <p class="muted" id="ttsm-dev"></p>
     <p class="tts-tip" id="ttsm-tip" hidden></p>
     <label class="tts-rate">읽는 속도 <input type="range" id="ttsm-rate" min="0.6" max="1.6" step="0.05"><b id="ttsm-rate-v">1×</b></label>
-    <div class="tts-h">이 기기의 한국어 목소리 <span class="muted">★ 많을수록 사람 목소리에 가까움</span></div>
+    <div class="seg ttsm-lang" id="ttsm-lang" hidden></div>
+    <div class="ttsm-arc" id="ttsm-arc" hidden></div>
+    <div class="tts-h"><span id="ttsm-vh">이 기기의 한국어 목소리</span> <span class="muted">★ 많을수록 사람 목소리에 가까움</span></div>
     <ul class="tts-voices" id="ttsm-voices"></ul>
     <div class="tts-h">기기별 좋은 목소리 설정 방법 <span class="muted">지금 기기 안내가 펼쳐져 있습니다</span></div>
     <div class="tts-guide" id="ttsm-guide"></div>
@@ -261,7 +265,13 @@
       <div class="seg" id="trm-mode"><button type="button" data-m="auto">자동</button><button type="button" data-m="para">문단 아래</button><button type="button" data-m="sent">문장마다</button><button type="button" data-m="side">좌우 나란히</button></div>
       <p class="muted small">자동: 폰은 문단 아래, 넓은 화면(패드·노트북)은 좌우 나란히. 형광펜·메모는 한국어 문장에 칠합니다.</p>
     </div>
-    <div class="trm-sec trm-audio"><b>소리로 듣기 <span class="muted">(다음 단계)</span></b><span class="muted small">아랍어는 글은 하나, 목소리는 나라별로 고르게 됩니다: 이집트 · 레바논 · 요르단 · 사우디</span></div>
+    <div class="trm-sec trm-audio">
+      <label class="trm-row"><b>🔊 번역을 누르면 원어민 목소리로 읽기</b><input type="checkbox" id="trm-tap"></label>
+      <span class="muted small">번역 문장을 누르면 그 문장을, 언어 표시(EN·JA·AR)를 누르면 그 문단 전체를 읽어요. 형광펜·메모(한국어 본문)와는 따로 동작합니다. 위 🔊 듣기에서도 읽는 언어를 바꿀 수 있어요.</span>
+      <div id="trm-arc" class="ttsm-arc"></div>
+      <div class="trm-vinfo" id="trm-vinfo"></div>
+      <button type="button" class="ghost" id="trm-voices">목소리 고르기 · 기기별 설치 안내</button>
+    </div>
     <p class="muted small">번역은 AI 번역을 바탕으로 한 초안입니다. 고칠 곳은 관리자가 문단 옆 ✎로 바로 고칠 수 있어요.</p>
   </div>
 </div>

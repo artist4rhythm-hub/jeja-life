@@ -5,7 +5,7 @@
 import { createBackend } from './backend.js';
 import { editImage } from './imgedit.js';
 import { initBible, openRef as bibleOpen, linkRefs, loadBooks } from './bible.js';
-import { initTTS, device } from './tts.js';
+import { initTTS, device, say, stopSay, VLANG, AR_C, arCountry, setArCountry, arHas, pickVoice, voiceLabel } from './tts.js';
 let B = null;
 (() => {
 'use strict';
@@ -475,6 +475,7 @@ $('#np-in').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaK
 $('#reader').addEventListener('mousedown', e => { if (e.detail >= 2 && e.target.closest('mark.hl')) e.preventDefault(); });
 $('#reader').addEventListener('click', e => {
   if (e.target.closest('.vref')) return;
+  if (e.target.closest('.se') && trTap()) return;   // 번역 문장 누르기 = 소리로 읽기
   const m = e.target.closest('mark.hl'); if (!m) return;
   const gid = m.dataset.gid, now = Date.now();
   if (lastTap.gid === gid && now - lastTap.t < 380) {           // 두 번 누름 → 바로 쓰기
@@ -1329,7 +1330,7 @@ async function applyTr() {
       if (per.every(([, a]) => a.length === parts.length)) { trSentences(tx, parts, per); return; }
     }
     const box = document.createElement('div'); box.className = 'trb'; box.dataset.for = id;
-    box.innerHTML = per.map(([l, a]) => `<p class="tl tl-${l}" lang="${l}" dir="${TRL[l].dir}"><b class="tg">${TRL[l].tag}</b>${esc(trJoin(l, a))}</p>`).join('') +
+    box.innerHTML = per.map(([l, a]) => `<p class="tl tl-${l}" lang="${l}" dir="${TRL[l].dir}"><b class="tg" data-l="${l}">${TRL[l].tag}</b>${a.map((x, k) => `<span class="ts" data-i="${k}">${esc(String(x).trim())}</span>`).join(l === 'ja' ? '' : ' ')}</p>`).join('') +
       (admin ? `<button type="button" class="tr-edit" data-tr-edit="${id}" aria-label="번역 고치기">✎</button>` : '');
     el.after(box);
     if (mode === 'side' && el.dataset.id) {
@@ -1338,6 +1339,7 @@ async function applyTr() {
     }
   });
   r.classList.toggle('tr-side', mode === 'side');
+  r.classList.toggle('tr-tap', trTap());
 }
 function trSentences(tx, parts, per) {
   // 문장 끝마다 빈 표시(span)를 끼우고, 번역은 CSS ::after 로 보여 줌 → 본문 글자(형광펜 위치)는 그대로
@@ -1352,6 +1354,29 @@ function trSentences(tx, parts, per) {
     else { let t = hit.node; while (t.parentNode !== tx && !t.nextSibling && t.parentNode) t = t.parentNode; t.after(frag); }
   }
 }
+/* ---- 번역 누르면 원어민 목소리로 읽기 (형광펜·메모와 따로) ---- */
+const trTap = () => Store.pref('trTap', true) !== false;
+let sayEl = null;
+function sayStop() { stopSay(); $$('.tr-say').forEach(x => x.classList.remove('tr-say')); sayEl = null; }
+function sayTr(el, parts, lang, partEls) {
+  if (sayEl === el) { sayStop(); return; }          // 읽는 중에 다시 누르면 멈춤
+  sayStop(); sayEl = el;
+  const hit = k => { $$('.tr-say').forEach(x => x.classList.remove('tr-say')); const t = partEls ? partEls[k] : el; if (t) t.classList.add('tr-say'); };
+  const r = say(parts, lang, { rate: Store.pref('ttsRate', 1), onPart: hit, onDone: e => { if (sayEl === el) sayStop(); if (e && e.error && e.error !== 'interrupted') toast('읽지 못했습니다: ' + e.error); } });
+  if (!r) { sayStop(); toast('이 브라우저는 음성 듣기를 지원하지 않습니다'); return; }
+  if (!r.voice && !Store.pref('nv_' + lang, false)) { Store.setPref('nv_' + lang, true); toast(`이 기기에 ${VLANG[lang].ko} 목소리가 없어 기본 목소리로 읽습니다 · 번역 설정의 ‘목소리 고르기’에서 설치 안내`); }
+}
+$('#reader').addEventListener('click', e => {
+  if (!trTap() || !getSelection().isCollapsed) return;
+  const t = e.target;
+  const se = t.closest('.se'); if (se) { const l = (se.className.match(/tl-(\w+)/) || [])[1]; if (l) sayTr(se, [se.dataset.t], l); return; }
+  const ts = t.closest('.trb .ts'); if (ts) { const l = ts.closest('.tl').lang; sayTr(ts, [ts.textContent], l); return; }
+  const tg = t.closest('.trb .tg[data-l]'); if (tg) { const p = tg.closest('.tl'); const parts = $$('.ts', p); sayTr(p, parts.map(x => x.textContent), tg.dataset.l, parts); }
+});
+function voiceInfo() {
+  const have = trLangsOf(); if (!have.length || !('speechSynthesis' in window)) return have.length ? '이 브라우저는 소리로 읽기를 지원하지 않습니다.' : '';
+  return '이 기기 목소리: ' + have.map(l => { const v = pickVoice(l); return `${TRL[l].ko} ${v ? '✓ <small>' + esc(voiceLabel(v)) + '</small>' : '<b class="no">없음</b>'}`; }).join(' · ');
+}
 /* 번역 설정 창 */
 function renderTrModal() {
   const have = trLangsOf(); const act = Store.pref('trLangs', ['en']) || [];
@@ -1360,13 +1385,25 @@ function renderTrModal() {
     <span class="trm-n"><b>${TRL[l].ko} <span class="tl-${l}" lang="${l}">${TRL[l].name}</span></b><small>${{ en: '성경 인용: BSB', ja: '성경 인용: 구어역(口語訳)', ar: '표준 아랍어(푸스하) · 이집트·레바논·요르단·사우디 공통 · 성경: 반다이크역' }[l]}</small></span>
     <span class="trm-o">${i >= 0 ? i + 1 : ''}</span></label>`; }).join('') || '<p class="muted">이 교재에는 아직 번역이 없습니다.</p>';
   const m = Store.pref('trMode', 'auto'); $$('#trm-mode button').forEach(b => b.classList.toggle('on', b.dataset.m === m));
+  $('#trm-tap').checked = trTap();
+  const hasAr = have.includes('ar'); const c = arCountry();
+  $('#trm-arc').hidden = !hasAr;
+  $('#trm-arc').innerHTML = hasAr ? `<span class="muted small">아랍어 목소리 나라 <small>(글은 표준 아랍어 하나, 억양만 바뀜)</small></span><div class="chips-row">${AR_C.map(([k, n]) => `<button type="button" data-arc="${k}" class="${k === c ? 'on' : ''} ${arHas(k) ? '' : 'no'}">${n}${k !== 'auto' && !arHas(k) ? ' <small>없음</small>' : ''}</button>`).join('')}</div>` : '';
+  $('#trm-vinfo').innerHTML = voiceInfo();
 }
+if ('speechSynthesis' in window) speechSynthesis.addEventListener && speechSynthesis.addEventListener('voiceschanged', () => { if (!$('#trm').hidden) renderTrModal(); });
 $('#btn-tr').addEventListener('click', () => { renderTrModal(); $('#trm').hidden = false; });
 $('#trm').addEventListener('click', e => {
   if (e.target.id === 'trm' || e.target.closest('#trm-close')) { $('#trm').hidden = true; return; }
   const mb = e.target.closest('#trm-mode [data-m]'); if (mb) { Store.setPref('trMode', mb.dataset.m); renderTrModal(); applyTr(); }
+  const ac = e.target.closest('#trm-arc [data-arc]'); if (ac) { setArCountry(ac.dataset.arc); renderTrModal(); if (tts) tts.refreshLangs();
+    const n = AR_C.find(x => x[0] === ac.dataset.arc)[1];
+    if (ac.dataset.arc !== 'auto' && !arHas(ac.dataset.arc)) toast(`이 기기에는 ${n} 목소리가 없어 있는 아랍어 목소리로 읽습니다`);
+    else say([VLANG.ar.demo], 'ar', { rate: Store.pref('ttsRate', 1) }); }
+  if (e.target.closest('#trm-voices')) { $('#trm').hidden = true; if (tts) tts.openModal(trActive()[0] || trLangsOf()[0] || 'ko'); }
 });
 $('#trm').addEventListener('change', e => {
+  if (e.target.id === 'trm-tap') { Store.setPref('trTap', e.target.checked); if (!e.target.checked) sayStop(); renderTrModal(); applyTr(); return; }
   if (e.target.id === 'trm-on') { Store.setPref('trOn', e.target.checked); if (e.target.checked && !trActive().length) Store.setPref('trLangs', trLangsOf().slice(0, 1)); }
   const l = e.target.dataset.l;
   if (l) { let act = (Store.pref('trLangs', ['en']) || []).filter(x => x !== l); if (e.target.checked) act.push(l); Store.setPref('trLangs', act); if (act.length) Store.setPref('trOn', true); }
@@ -1414,6 +1451,20 @@ function setupTTS() {
       return all.find(b => b.getBoundingClientRect().bottom > top) || all[0];
     },
     getBlocks(start) { const all = $$('#reader .blk').filter(readable); const i = Math.max(0, all.indexOf(start)); return all.slice(i); },
+    // 번역 언어로 듣기
+    trLangs: () => trLangsOf(),
+    prepTr: l => trLoad(st.lid, l),
+    trChunks(el, l) {
+      const a = (trCache[st.lid + '/' + l] || {})[el.dataset.id]; if (!a || !a.length) return [];
+      const tx = $('.tx', el); const parts = tx ? splitSent(tx.textContent) : [];
+      const offs = []; let acc = 0; parts.forEach(p => { offs.push([acc, acc + p.trimEnd().length]); acc += p.length; });
+      const same = parts.length === a.length;
+      return a.map((s, i) => ({ id: el.dataset.id, i, lang: l, say: String(s).trim(), s: same ? offs[i][0] : 0, e: same ? offs[i][1] : 0 })).filter(c => c.say);
+    },
+    markTr(c) {
+      const el = $(`#reader .blk[data-id="${c.id}"]`); if (!el) return null;
+      return $$(`.se.tl-${c.lang}`, el)[c.i] || $(`#reader .trb[data-for="${c.id}"] .tl-${c.lang} .ts[data-i="${c.i}"]`);
+    },
     // 폰: 한 단원을 다 읽으면 다음 단원으로 넘어가서 계속 읽음
     async onEnd() {
       const L = cur(); if (!L || !isMob() || st.ui >= L.body.length - 1) return false;

@@ -675,3 +675,30 @@ h1 .se::after,h2 .se::after,h3 .se::after,h4 .se::after,h5 .se::after{font-size:
 .hero-note{font-size:13px;color:var(--muted);margin:14px 0 0;text-align:right}
 @media (max-width:759px){.top #btn-tr .lbl{display:none}.top #btn-tr{padding:0 9px}}
 .tr-side .trrow .pgmark{right:auto;left:-34px}
+
+/* ===== v0.16: 번역 소리로 읽기 · 듣기 언어 ===== */
+#reader.tr-tap .se::after,#reader.tr-tap .trb .ts,#reader.tr-tap .trb .tg{cursor:pointer}
+#reader.tr-tap .trb .ts{border-radius:4px;transition:background .15s}
+@media (hover:hover){#reader.tr-tap .trb .ts:hover,#reader.tr-tap .se:hover::after{background:color-mix(in srgb,currentColor 7%,transparent);border-radius:4px}}
+#reader.tr-tap .trb .tg::after{content:" 🔊";font-size:9px;letter-spacing:0}
+.se.tr-say::after,.se.tts-tr::after,.trb .ts.tr-say,.trb .ts.tts-tr{background:color-mix(in srgb,currentColor 14%,transparent);border-radius:4px;box-shadow:0 0 0 2px color-mix(in srgb,currentColor 14%,transparent)}
+.trb .tl.tr-say{outline:2px solid color-mix(in srgb,currentColor 18%,transparent);outline-offset:3px;border-radius:4px}
+.ttsbar{flex-wrap:wrap}
+.ttsbar .tts-lang{font-size:12px;font-weight:800;letter-spacing:.04em;border:1px solid rgba(255,255,255,.3);min-width:40px;height:30px}
+.ttsbar.tr-lang .tts-lang{background:#fff;color:#1b1f1d}
+.tts-cap{flex-basis:100%;margin:2px 4px 2px;font-size:13.5px;line-height:1.45;color:#e9f3ee;max-height:4.4em;overflow:auto}
+.tts-cap[lang=ar]{font-family:'Noto Naskh Arabic',serif;font-size:15px;text-align:right}
+.tts-cap[lang=ja]{font-family:'Noto Sans JP',sans-serif}
+.tts-cap[lang=en]{font-family:'Source Serif 4',Georgia,serif}
+.chips-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.chips-row button{font-size:12.5px;border:1px solid var(--line);border-radius:99px;padding:5px 12px;background:var(--surface,#fff);color:var(--ink)}
+.chips-row button.on{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:700}
+.chips-row button.no{opacity:.6}
+.chips-row button small{font-size:10.5px;opacity:.8}
+.trm-row{display:flex!important;align-items:center;justify-content:space-between;gap:10px;cursor:pointer}
+.trm-row input{width:20px;height:20px;accent-color:var(--brand);flex:none}
+.trm-vinfo{font-size:12px;color:var(--muted);line-height:1.6}
+.trm-vinfo small{opacity:.85}.trm-vinfo .no{color:#b4542c}
+.trm-audio .ghost{justify-self:start;font-size:13px}
+.ttsm-lang{margin:4px 0 2px}
+.ttsm-arc{display:grid;gap:2px;margin:4px 0}
