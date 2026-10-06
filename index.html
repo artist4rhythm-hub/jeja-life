@@ -33,6 +33,14 @@
       <button type="button" class="icon-btn" id="fs-up" aria-label="글자 크게">가<small>+</small></button>
     </div>
     <button type="button" class="chip-btn only-mid" id="btn-panel" aria-pressed="false">노트·자료</button>
+    <button type="button" class="chip-btn adm-btn" id="btn-admm" aria-haspopup="menu" aria-expanded="false" hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg><span class="lbl"> 관리</span></button>
+  </div>
+  <div id="admm" class="admm" role="menu" aria-label="관리자 메뉴" hidden>
+    <div class="admm-h">관리자 메뉴</div>
+    <button type="button" role="menuitem" data-adm="books"><span>📚</span><b>교재 관리</b><small>공개 대상 · 판 · 기본판</small></button>
+    <button type="button" role="menuitem" data-adm="upload"><span>⬆</span><b>교재 올리기</b><small>새 교재 · 새 판 · 번역</small></button>
+    <button type="button" role="menuitem" data-adm="users"><span>👤</span><b>사용자 관리</b><small>초대 · 역할 · 사용 중지</small></button>
+    <button type="button" role="menuitem" data-adm="logs"><span>🕘</span><b>접속 기록</b><small>누가 언제 들어왔는지</small></button>
   </div>
 </header>
 
@@ -273,6 +281,15 @@
       <button type="button" class="ghost" id="trm-voices">목소리 고르기 · 기기별 설치 안내</button>
     </div>
     <p class="muted small">번역은 AI 번역을 바탕으로 한 초안입니다. 고칠 곳은 관리자가 문단 옆 ✎로 바로 고칠 수 있어요.</p>
+  </div>
+</div>
+
+<div id="bkm" class="modal" hidden>
+  <div class="modal-box wide bkm-box" role="dialog" aria-label="교재 관리">
+    <div class="pp-head"><h3>📚 교재 관리</h3><button type="button" class="icon-btn" id="bkm-close" aria-label="닫기">✕</button></div>
+    <p class="muted small">공개 대상을 바꾸면 본문·원본 사진·번역에 모두 적용됩니다(1~2분). 기본판은 판을 고르지 않은 사람에게 보이는 판입니다.</p>
+    <div class="bkm-head" aria-hidden="true"><span>교재</span><span>기본판</span><span>공개 대상</span></div>
+    <div id="bkm-body" class="bkm-body"></div>
   </div>
 </div>
 

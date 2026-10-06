@@ -706,3 +706,40 @@ h1 .se,h2 .se,h3 .se,h4 .se,h5 .se{font-size:.68em;margin-top:2px}
 /* ===== v0.17: 번역에도 형광펜·메모 ===== */
 .note .tlk{font-size:10px;font-weight:800;letter-spacing:.05em;border-radius:4px;padding:1px 5px;vertical-align:1px}
 .note .tlk.tl-en{background:var(--tl-en-bg)}.note .tlk.tl-ja{background:var(--tl-ja-bg)}.note .tlk.tl-ar{background:var(--tl-ar-bg)}
+
+/* ===== v0.18: 관리자 메뉴 · 교재 관리 표 ===== */
+#btn-admm{display:inline-flex;align-items:center;gap:2px}
+body:not(.lib-on) #btn-admm{display:none!important}
+.admm{position:fixed;z-index:60;width:min(280px,calc(100vw - 16px));background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 36px rgba(0,0,0,.22);padding:6px;display:grid;gap:2px}
+.admm-h{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);padding:6px 10px 4px}
+.admm button{display:grid;grid-template-columns:28px 1fr;grid-template-rows:auto auto;column-gap:6px;text-align:left;padding:9px 10px;border-radius:10px;color:var(--ink)}
+.admm button:hover,.admm button:focus-visible{background:var(--brand-soft)}
+.admm button span{grid-row:1/3;font-size:18px;align-self:center}
+.admm button b{font-size:14px}
+.admm button small{font-size:11.5px;color:var(--muted)}
+.bkm-box{width:min(720px,100%);max-height:calc(100% - 24px);overflow:auto}
+.bkm-head,.bkm-row{display:grid;grid-template-columns:minmax(0,1fr) 108px 232px;align-items:center;gap:12px}
+.bkm-head{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--muted);padding:8px 12px 6px;border-bottom:1px solid var(--line);position:sticky;top:-1px;background:var(--surface);z-index:1}
+.bkm-head span:nth-child(2){text-align:center}
+.bkm-g h4{margin:14px 0 6px;font-size:12.5px;color:var(--brand)}
+.bkm-book{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:8px}
+.bkm-row{padding:10px 12px;border-top:1px solid var(--line)}
+.bkm-row:first-child{border-top:0}
+.bkm-row.sub{background:var(--bg)}
+.bkm-name{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}
+.bkm-name b{font-size:14.5px}
+.bkm-ed{font-size:12.5px;color:var(--muted);display:inline-flex;align-items:center;gap:2px}
+.bkm-pen{font-size:12px;color:var(--brand);padding:2px 6px;border-radius:6px}
+.bkm-pen:hover{background:var(--brand-soft)}
+.bkm-pen.add{border:1px dashed var(--line);color:var(--muted)}
+.bkm-tag{font-size:11px;border:1px solid var(--line);border-radius:99px;padding:1px 8px;color:var(--muted)}
+.bkm-def{display:flex;justify-content:center}
+.bkm-def .ghost{font-size:12px;padding:4px 10px;white-space:nowrap}
+.bkm-acc{width:100%}
+.bkm-acc button{font-size:12.5px;padding:7px 4px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:4px}
+.bkm-acc button[data-acc-v="staff"].on{background:#8a5a12;color:#fff}
+@media (max-width:640px){
+  .bkm-head{display:none}
+  .bkm-row{grid-template-columns:auto minmax(0,1fr);grid-template-areas:"n n" "d a";row-gap:8px}
+  .bkm-name{grid-area:n}.bkm-def{grid-area:d;justify-content:flex-start;min-width:92px}.bkm-accw{grid-area:a}
+}

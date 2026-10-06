@@ -1057,9 +1057,6 @@ function renderLibrary() {
   // 같은 교재의 여러 판은 카드 하나로: 내가 고른 판(없으면 기본판)만 보임
   const shown = vis.filter(b => !(b.role === 'teacher' && teacherOf[b.pair] === b)).filter(b => !b.series || (chosenEdition(b.series) || {}).id === b.id);
   const groups = []; shown.forEach(b => { const g = b.group || '교재'; let G = groups.find(x => x.name === g); if (!G) groups.push(G = { name: g, books: [] }); G.books.push(b); });
-  const admin = isAdmin() && B.kind === 'firebase';
-  const accSel = b => admin ? `<label class="lb-acc">${esc((b.short || b.title) + (b.edition ? ' ' + b.edition : ''))} 공개 대상
-      <select data-acc="${b.id}"><option value="all" ${b.access !== 'staff' ? 'selected' : ''}>모든 사용자</option><option value="staff" ${b.access === 'staff' ? 'selected' : ''}>강사·관리자만</option></select></label>` : '';
   const last = bookById(Store.pref('lastBook', '')); const lr = last && canSee(last) && resumeOf(last.id);
   $('#lib-body').innerHTML = (lr ? `<button type="button" class="lb-resume" data-open="${last.id}" data-resume="1">
         ${coverHTML(last, true)}<span class="lb-rt"><small>이어 읽기${last.edition ? ' · ' + esc(last.edition) : ''}</small><b>${esc(last.short || last.title)}</b><span>${esc(lr.text)}</span></span><span class="lb-go" aria-hidden="true">›</span></button>` : '') +
@@ -1070,8 +1067,6 @@ function renderLibrary() {
         : (b.edition ? `<span class="lb-ed one">${esc(b.edition)}</span>` : '');
       const older = eds.filter(e => e.id !== b.id && hasMarksIn(e) && !Store.pref('imp_' + b.id + '_' + e.id, 0));
       const imp = older.map(e => `<button type="button" class="lb-imp" data-imp-from="${e.id}" data-imp-to="${b.id}">↪ ${esc(e.edition || e.title)}의 내 형광펜·메모·답을 이 판으로 가져오기</button>`).join('');
-      const edAdmin = admin && eds.length > 1 ? eds.map(e => `<div class="lb-edrow"><b>${esc(e.edition || e.id)}</b>${e.seriesDefault ? '<span class="lb-def">기본판</span>' : `<button type="button" class="ghost" data-def="${e.id}">기본판으로</button>`}<button type="button" class="ghost" data-edname="${e.id}">판 이름</button>${accSel(e)}</div>`).join('')
-        : (admin ? accSel(b) + (b.series ? `<button type="button" class="ghost" data-edname="${b.id}">판 이름</button>` : '') : '');
       return `<article class="lb-card">
         <button type="button" class="lb-main" data-open="${b.id}" ${ready ? '' : 'disabled'}>${coverHTML(b)}
           <span class="lb-info"><b>${esc(b.title)}</b><span class="muted">${esc(b.sub || '')}</span>
@@ -1081,10 +1076,53 @@ function renderLibrary() {
         ${imp}
         ${t ? `<div class="lb-btns"><button type="button" class="primary" data-open="${b.id}">${r ? '이어 읽기' : '교재 열기'}</button><button type="button" class="lb-tbtn" data-open="${t.id}">${LOCK_SVG} ${esc(t.short || '교사 매뉴얼')}</button></div>
           <p class="muted small">교사 매뉴얼은 강사·관리자에게만 보입니다. 읽는 중에 위쪽 [교재 ↔ 교사용] 버튼으로 같은 과를 오갈 수 있어요.</p>` : ''}
-        ${admin ? `<div class="lb-admin">${edAdmin}${t ? accSel(t) : ''}</div>` : ''}
-      </article>`; }).join('')}</section>`).join('') +
-    (admin ? `<button type="button" class="lb-add" id="lib-add"><b>+ 교재 추가</b><span class="muted">받은 교재데이터 폴더를 올리면 서재에 생깁니다 (새 판도 여기서)</span></button>` : '');
+      </article>`; }).join('')}</section>`).join('');
+  if (!$('#bkm').hidden) renderBookAdmin();
 }
+/* ---------------- 관리자 메뉴 (서재 오른쪽 위 ⚙) ---------------- */
+const admm = $('#admm');
+function toggleAdmm(open) {
+  open = open ?? admm.hidden; admm.hidden = !open; $('#btn-admm').setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) { $('[data-adm="upload"]', admm).hidden = B.kind !== 'firebase'; const r = $('#btn-admm').getBoundingClientRect(); admm.style.top = (r.bottom + 8) + 'px'; admm.style.right = Math.max(8, document.documentElement.clientWidth - r.right) + 'px'; }
+}
+$('#btn-admm').addEventListener('click', e => { e.stopPropagation(); toggleAdmm(); });
+document.addEventListener('pointerdown', e => { if (!admm.hidden && !admm.contains(e.target) && !e.target.closest('#btn-admm')) toggleAdmm(false); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && !admm.hidden) toggleAdmm(false); });
+admm.addEventListener('click', e => {
+  const b = e.target.closest('[data-adm]'); if (!b) return; toggleAdmm(false);
+  const k = b.dataset.adm;
+  if (k === 'books') { renderBookAdmin(); $('#bkm').hidden = false; }
+  if (k === 'upload') openUploader();
+  if (k === 'users' || k === 'logs') { closeSheets(); $('#people').hidden = false; ppEdit = null; ppConfirm = null; setPpTab(k, k === 'logs' ? '' : undefined); if (k === 'users') loadPeople(); }
+});
+/* 교재 관리: 모든 교재·판·교사용을 한 표에 같은 자리로 정렬 */
+function renderBookAdmin() {
+  const lib = st.library; const groups = [];
+  const seen = new Set();
+  const rowsOf = b => { const eds = b.series ? editionsOf(b.series) : [b]; return eds; };
+  lib.slice().sort((a, b) => (a.order ?? 99) - (b.order ?? 99)).forEach(b => {
+    if (seen.has(b.id) || b.role === 'teacher') return;
+    const eds = rowsOf(b); eds.forEach(e => seen.add(e.id));
+    const t = lib.find(x => x.role === 'teacher' && x.pair && eds.some(e => e.id === x.pair)); if (t) seen.add(t.id);
+    const g = b.group || '교재'; let G = groups.find(x => x.name === g); if (!G) groups.push(G = { name: g, items: [] });
+    G.items.push({ eds, t });
+  });
+  lib.filter(b => !seen.has(b.id)).forEach(b => { let G = groups.find(x => x.name === '기타'); if (!G) groups.push(G = { name: '기타', items: [] }); G.items.push({ eds: [b] }); });
+  const acc = b => `<div class="seg bkm-acc" role="group" aria-label="${esc(b.title)} 공개 대상"><button type="button" data-acc-v="all" data-acc-id="${b.id}" class="${b.access !== 'staff' ? 'on' : ''}">모든 사용자</button><button type="button" data-acc-v="staff" data-acc-id="${b.id}" class="${b.access === 'staff' ? 'on' : ''}">${LOCK_SVG} 강사·관리자</button></div>`;
+  const row = (b, multi, kind) => `<div class="bkm-row${kind ? ' sub' : ''}">
+      <div class="bkm-name"><b>${esc(b.short || b.title)}</b>${kind === 'teacher' ? '' : b.edition ? `<span class="bkm-ed">${esc(b.edition)} <button type="button" class="bkm-pen" data-edname="${b.id}" aria-label="판 이름 바꾸기">✎</button></span>` : `<button type="button" class="bkm-pen add" data-edname="${b.id}">+ 판 이름</button>`}${kind === 'teacher' ? '<span class="bkm-tag">교사용</span>' : ''}</div>
+      <div class="bkm-def">${multi ? (b.seriesDefault ? '<span class="lb-def">기본판</span>' : `<button type="button" class="ghost" data-def="${b.id}">기본판으로</button>`) : '<span class="muted">—</span>'}</div>
+      <div class="bkm-accw">${acc(b)}</div></div>`;
+  $('#bkm-body').innerHTML = groups.map(G => `<section class="bkm-g"><h4>${esc(G.name)}</h4>${G.items.map(({ eds, t }) =>
+    `<div class="bkm-book">${eds.map(e => row(e, eds.length > 1)).join('')}${t ? row(t, false, 'teacher') : ''}</div>`).join('')}</section>`).join('');
+}
+$('#bkm').addEventListener('click', async e => {
+  if (e.target.id === 'bkm' || e.target.closest('#bkm-close')) { $('#bkm').hidden = true; return; }
+  const a = e.target.closest('[data-acc-v]');
+  if (a) { if (a.classList.contains('on')) return; await setBookAccessUI(bookById(a.dataset.accId), a.dataset.accV, a.closest('.bkm-acc')); return; }
+  const df = e.target.closest('[data-def]'); if (df) { await setDefaultEd(df.dataset.def); return; }
+  const en = e.target.closest('[data-edname]'); if (en) { await renameEd(en.dataset.edname); }
+});
 
 /* 이전 판의 내 표시(형광펜·밑줄·메모·사진)·답·읽음 표시를 새 판으로 옮기기
  * 같은 과 번호에서 같은 문장을 찾아 옮기고, 문장이 바뀐 곳은 '옮기지 못한 항목'으로 보여 줌 (이전 판에는 그대로 남음) */
@@ -1208,39 +1246,38 @@ $('#lib').addEventListener('click', async e => {
     catch (err) { toast('가져오지 못했습니다: ' + (err.code || err.message)); renderLibrary(); }
     return;
   }
-  const df = e.target.closest('[data-def]');
-  if (df) {
-    const b = bookById(df.dataset.def); if (!confirm(`「${b.title}」 ${b.edition || ''}을(를) 기본판으로 할까요?\n처음 여는 사람과 판을 고르지 않은 사람에게 이 판이 보입니다.`)) return;
-    st.library.forEach(x => { if (seriesOf(x) === seriesOf(b)) x.seriesDefault = x.id === b.id; });
-    try { await B.putLibrary(st.library); toast('기본판을 바꿨습니다'); } catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
-    renderLibrary(); return;
-  }
-  const en = e.target.closest('[data-edname]');
-  if (en) {
-    const b = bookById(en.dataset.edname); const v = prompt('판 이름 (예: 2026년 8월판, 2027 상반기판)', b.edition || ''); if (v == null || !v.trim()) return;
-    b.edition = v.trim(); if (!b.series) b.series = b.id;
-    try { await B.putLibrary(st.library); toast('판 이름을 바꿨습니다'); } catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
-    renderLibrary(); return;
-  }
   const o = e.target.closest('[data-open]'); if (!o || o.disabled) return;
   await openBook(o.dataset.open);
 });
 $('#lib').addEventListener('change', async e => {
-  const ed = e.target.closest('[data-ed]'); if (ed) { Store.setPref('ed_' + ed.dataset.ed, ed.value); renderLibrary(); return; }
-  const sel = e.target.closest('[data-acc]'); if (!sel) return;
-  const b = bookById(sel.dataset.acc); const v = sel.value; const label = v === 'staff' ? '강사·관리자만' : '모든 사용자';
-  if (!confirm(`「${b.title}」 공개 대상을 '${label}'(으)로 바꿀까요?\n본문·원본 사진에 모두 적용되어 1~2분 걸릴 수 있습니다.`)) { sel.value = b.access || 'all'; return; }
-  sel.disabled = true;
+  const ed = e.target.closest('[data-ed]'); if (ed) { Store.setPref('ed_' + ed.dataset.ed, ed.value); renderLibrary(); }
+});
+async function setDefaultEd(id) {
+  const b = bookById(id); if (!confirm(`「${b.title}」 ${b.edition || ''}을(를) 기본판으로 할까요?\n처음 여는 사람과 판을 고르지 않은 사람에게 이 판이 보입니다.`)) return;
+  st.library.forEach(x => { if (seriesOf(x) === seriesOf(b)) x.seriesDefault = x.id === b.id; });
+  try { await B.putLibrary(st.library); toast('기본판을 바꿨습니다'); } catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
+  renderLibrary(); renderBookAdmin();
+}
+async function renameEd(id) {
+  const b = bookById(id); const v = prompt('판 이름 (예: 2026년 8월판, 2027 상반기판)', b.edition || ''); if (v == null || !v.trim()) return;
+  b.edition = v.trim(); if (!b.series) b.series = b.id;
+  try { await B.putLibrary(st.library); toast('판 이름을 바꿨습니다'); } catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
+  renderLibrary(); renderBookAdmin();
+}
+async function setBookAccessUI(b, v, box) {
+  const label = v === 'staff' ? '강사·관리자만' : '모든 사용자';
+  if (!confirm(`「${b.title}」${b.edition ? ' ' + b.edition : ''} 공개 대상을 '${label}'(으)로 바꿀까요?\n본문·원본 사진·번역에 모두 적용되어 1~2분 걸릴 수 있습니다.`)) return;
+  const btns = box ? $$('button', box) : []; btns.forEach(x => x.disabled = true);
   try {
     const ix = await loadBookIndex(b.id); const ids = ix.lessons.filter(l => l.ready).map(l => l.id);
     await Promise.all(ids.map(loadLesson));
     const pages = [...new Set(ids.flatMap(id => st.lessons[id].pages || []))];
     await B.setBookAccess(b.indexDoc || '_index', ids, pages, v, (n, t) => { $('#toast').textContent = `공개 대상 바꾸는 중… ${n}/${t}`; $('#toast').hidden = false; }, b.langs || []);
     b.access = v; await B.putLibrary(st.library);
-    toast(`「${b.title}」 → ${label}`); renderLibrary();
-  } catch (err) { toast('바꾸지 못했습니다: ' + (err.code || err.message)); sel.value = b.access || 'all'; }
-  finally { sel.disabled = false; }
-});
+    toast(`「${b.title}」 → ${label}`);
+  } catch (err) { toast('바꾸지 못했습니다: ' + (err.code || err.message)); }
+  finally { btns.forEach(x => x.disabled = false); renderLibrary(); renderBookAdmin(); }
+}
 [$('#btn-lib'), $('#btn-lib-m'), $('#nav-lib')].forEach(b => b.addEventListener('click', showLibrary));
 $('.top .brand').addEventListener('click', () => { if (!document.body.classList.contains('lib-on') && st.me) showLibrary(); });
 
@@ -1535,6 +1572,7 @@ async function enterApp(info) {
   $('#acct-name').textContent = info.name + (info.role === 'admin' ? ' · 관리자' : info.role === 'teacher' ? ' · 강사' : '');
   $('#btn-admin').hidden = !(info.role === 'admin' && B.kind === 'firebase');
   $('#btn-people').hidden = info.role !== 'admin';
+  $('#btn-admm').hidden = info.role !== 'admin';
   document.body.dataset.role = info.role || 'member'; st.me = info;
   $('#btn-logout').hidden = B.kind !== 'firebase';
   setupTTS();
