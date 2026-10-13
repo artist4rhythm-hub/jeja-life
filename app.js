@@ -172,7 +172,8 @@ function blockHTML(b, prev) {
 }
 function unitHTML(u, i) {
   let prev = null; const html = u.blocks.map(b => { const h = blockHTML(b, prev); prev = b; return h; }).join('');
-  return `<section class="unit" id="${u.id}" data-ui="${i}"><div class="card">${html}${extraHTML(u)}</div></section>`;
+  const qd = qsDayOf(u); const qb = qd && (curBook().qs || []).length ? `<button type="button" class="qs-open" data-qs-day="${qd}">💬 ${qsDayLabel(qd)} 나눔 질문</button>` : '';
+  return `<section class="unit" id="${u.id}" data-ui="${i}"><div class="card">${html}${qb}${extraHTML(u)}</div></section>`;
 }
 function heroHTML(L) {
   if (!L.cover) return '';
@@ -230,6 +231,7 @@ function renderReader() {
     html = `<div class="page-wrap bk">${heroHTML(L)}${L.body.map(unitHTML).join('')}</div>`;
   }
   r.innerHTML = html;
+  if (!$('#qs').hidden) { qsDay = null; qsEdit = false; renderQs(); }
   if (tts) tts.rerendered();
   $('#top-lesson').textContent = (lessonNo(L) ? L.no + '과 ' : '') + L.title;
   $('#top-book').textContent = curBook().short || curBook().title;
@@ -639,7 +641,7 @@ function showPage(p, silent) {
 $('#pg-prev').addEventListener('click', () => { const L = cur(); const i = L.pages.indexOf(st.pg); if (i > 0) showPage(L.pages[i - 1]); });
 $('#pg-next').addEventListener('click', () => { const L = cur(); const i = L.pages.indexOf(st.pg); if (i < L.pages.length - 1) showPage(L.pages[i + 1]); });
 $('#pg-zoom').addEventListener('click', () => $('#orig-view').classList.toggle('zoom'));
-function setPanelTab(p) { $$('.ptabs button').forEach(b => b.classList.toggle('on', b.dataset.p === p)); $$('#panel [data-pp]').forEach(s => s.hidden = s.dataset.pp !== p); $('#panel-title').textContent = { notes: '내 노트', files: '자료', orig: '원본 보기', bible: '성경' }[p]; if (p === 'bible') ensureBible(); }
+function setPanelTab(p) { $$('.ptabs button').forEach(b => b.classList.toggle('on', b.dataset.p === p)); $$('#panel [data-pp]').forEach(s => s.hidden = s.dataset.pp !== p); $('#panel-title').textContent = { notes: '내 노트', files: '자료', orig: '원본 보기', bible: '성경', qs: '나눔 질문' }[p]; if (p === 'bible') ensureBible(); if (p === 'qs') { qsDay = null; renderQs(); } }
 $('.ptabs').addEventListener('click', e => { const b = e.target.closest('[data-p]'); if (!b) return; setPanelTab(b.dataset.p); setOrig(b.dataset.p === 'orig' || b.dataset.p === 'bible'); });
 /* 성경 패널 */
 let bibleReady = false;
@@ -754,6 +756,7 @@ function classify(f) {
   let m = n.match(/^index(?:_([a-z][a-z0-9]*))?\.json$/); if (m) return { kind: 'index', book: m[1] || null, label: '목차' + (m[1] ? ' · ' + m[1] : ''), order: 3 };
   m = n.match(/^([A-Z]\d\d)\.json$/); if (m) return { kind: 'lesson', lid: m[1], label: '본문 ' + m[1], order: 2 };
   m = n.match(/^tr_([a-z]{2})_([A-Z]\d\d)\.json$/); if (m) return { kind: 'tr', lang: m[1], lid: m[2], label: `번역 ${(TRL[m[1]] || {}).ko || m[1]} ${m[2]}`, order: 4 };
+  m = n.match(/^qs_([a-z][a-z0-9]*)_([a-z0-9]+)_(\d\d)\.json$/); if (m) return { kind: 'qs', series: m[1], aud: m[2], no: +m[3], label: `나눔 질문 ${(AUDS.find(a => a.id === m[2]) || { ko: m[2] }).ko} ${+m[3]}과`, order: 5 };
   m = n.match(/^p(.+)\.webp$/); if (m) return { kind: 'page', page: m[1], label: '원본 ' + (m[1].match(/^([a-z][a-z0-9]*)_/) || ['', ''])[1] + ' ' + pageLabel(m[1]), order: 1 };
   return null;
 }
@@ -770,8 +773,8 @@ function addUplFiles(files) {
   renderUpl();
 }
 function renderUpl() {
-  const n = { index: 0, lesson: 0, page: 0, tr: 0 }; uplItems.forEach(x => n[x.kind]++);
-  $('#upl-sum').textContent = uplItems.length ? `목차 ${n.index} · 본문 ${n.lesson}과 · 원본 사진 ${n.page}쪽${n.tr ? ` · 번역 ${n.tr}개` : ''}` : '아직 고른 파일이 없습니다';
+  const n = { index: 0, lesson: 0, page: 0, tr: 0, qs: 0 }; uplItems.forEach(x => n[x.kind]++);
+  $('#upl-sum').textContent = uplItems.length ? `목차 ${n.index} · 본문 ${n.lesson}과 · 원본 사진 ${n.page}쪽${n.tr ? ` · 번역 ${n.tr}개` : ''}${n.qs ? ` · 나눔 질문 ${n.qs}개` : ''}` : '아직 고른 파일이 없습니다';
   $('#upl-list').innerHTML = uplItems.map(x => `<li><span>${esc(x.label)}</span><small>${esc(x.file.name)}</small><b class="${x.status === '완료' ? 'ok' : x.status.startsWith('실패') ? 'bad' : ''}">${esc(x.status)}</b></li>`).join('');
   $('#upl-go').disabled = !uplItems.length || uplItems.every(x => x.status === '완료');
 }
@@ -795,7 +798,7 @@ async function runUpload() {
   const pageBook = p => { const m = String(p).match(/^([a-z][a-z0-9]*)_/); return m ? m[1] : 'jeja'; };
   const pageLid = {}; Object.values(lessonsIn).forEach(L => (L.pages || []).forEach(p => pageLid[p] = L.id));
   const todo = uplItems.filter(x => x.status !== '완료' && !x.status.startsWith('실패'));
-  const trBooks = {}; let keptEd = 0;
+  const trBooks = {}, qsSeries = {}; let keptEd = 0;
   const one = async x => {
     x.status = '올리는 중'; renderUpl();
     try {
@@ -806,11 +809,14 @@ async function runUpload() {
         // 앱에서 ✎로 고친 문단은 새 파일로 덮어쓰지 않고 그대로 둠
         try { const ex = await B.getTr(x.lid, x.lang); if (ex && ex.ed && ex.t) { o.ed = ex.ed; Object.keys(ex.ed).forEach(id => { if (ex.t[id]) { o.t[id] = ex.t[id]; keptEd++; } }); } } catch (e) {}
         await B.putTr(x.lid, x.lang, o, metaOf(bid).access); delete trCache[x.lid + '/' + x.lang]; (trBooks[bid] = trBooks[bid] || new Set()).add(x.lang); }
+      if (x.kind === 'qs') { const o = JSON.parse(await readText(x.file)); const doc = `_qs_${x.series}_${x.aud}_${String(x.no).padStart(2, '0')}`;
+        let access = 'all'; try { const ex = await B.getQs(doc); if (ex && ex.access) access = ex.access; } catch (e) {}   // 이미 정한 공개 범위는 그대로
+        await B.putQs(doc, o, access); delete qsCache[doc]; (qsSeries[x.series] = qsSeries[x.series] || new Set()).add(x.aud); }
       x.status = '완료';
     } catch (e) { x.status = '실패: ' + (e.code === 'permission-denied' ? '관리자 권한 없음' : e.message); }
     renderUpl();
   };
-  for (const k of ['page', 'lesson', 'index', 'tr']) {
+  for (const k of ['page', 'lesson', 'index', 'tr', 'qs']) {
     const q = todo.filter(x => x.kind === k);
     while (q.length) await Promise.all(q.splice(0, 4).map(one));
   }
@@ -819,7 +825,8 @@ async function runUpload() {
   // 2) 서재 목록에 교재 등록(이미 있으면 정보만 새로) · 번역 언어 표시
   const ids = Object.keys(indexIn);
   Object.entries(trBooks).forEach(([bid, set]) => { const b = bookById(bid); if (b) b.langs = [...new Set([...(b.langs || []), ...set])]; });
-  if (ids.length || Object.keys(trBooks).length) {
+  Object.entries(qsSeries).forEach(([sr, set]) => st.library.filter(b => seriesOf(b) === sr).forEach(b => { b.qs = [...new Set([...(b.qs || []), ...set])]; }));
+  if (ids.length || Object.keys(trBooks).length || Object.keys(qsSeries).length) {
     ids.forEach(id => { const m = metaOf(id); const i = st.library.findIndex(b => b.id === id); const entry = { ...(i >= 0 ? st.library[i] : {}), ...m }; delete entry.lessons;
       if (i < 0 && entry.seriesDefault) st.library.forEach(b => { if (seriesOf(b) === seriesOf(entry)) b.seriesDefault = false; });   // 새 판을 처음 올리면 그 판이 기본판
       if (i >= 0) st.library[i] = entry; else st.library.push(entry); });
@@ -1516,6 +1523,106 @@ $('#tre').addEventListener('click', async e => {
   } catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
   finally { btn.disabled = false; }
 });
+/* ---------------- 나눔 질문 (오른쪽 '나눔' 탭) ----------------
+ * 대상(연령대·성별)별로 과·날짜마다 질문 5개 + 인도자 팁. 같은 교재의 모든 판(2024·2026)이 함께 씀
+ * 저장: lessons/_qs_{교재묶음}_{대상}_{과번호 2자리} — 관리자가 [교재 올리기]로 qs_….json을 올리거나 앱에서 ✎로 고침 */
+const AUDS = [
+  { id: 'm3040', ko: '30~40대 남성', icon: '👨' },
+  { id: 'f3040', ko: '30~40대 여성', icon: '👩' },
+  { id: 'm2030', ko: '20~30대 남성', icon: '🧑' },
+  { id: 'f2030', ko: '20~30대 여성', icon: '👩' },
+  { id: 'm5060', ko: '50~60대 남성', icon: '👨' },
+  { id: 'f5060', ko: '50~60대 여성', icon: '👩' },
+  { id: 'youth', ko: '청년', icon: '🙋' }
+];
+const QK = { 여는: 'open', 말씀: 'word', 삶: 'life', 마음: 'heart', 결단: 'act' };
+const qsCache = {}; let qsDay = null, qsEdit = false;
+const qsDoc = (aud, no) => `_qs_${seriesOf(curBook())}_${aud}_${String(no).padStart(2, '0')}`;
+function qsDayOf(u) { const m = String(u.title || '').match(/^(\d+)\s*(?:일|\.)/); return m ? +m[1] : 0; }
+const qsDayLabel = d => cur() && cur().no === 1 ? `${d}.` : `${d}일`;
+const qsAuds = () => AUDS.filter(a => (curBook().qs || []).includes(a.id));
+const qsAud = () => { const have = qsAuds(); const want = Store.pref('qsAud', 'm3040'); return (have.find(a => a.id === want) || have[0] || null); };
+async function qsLoad(aud, no) {
+  const k = qsDoc(aud, no); if (k in qsCache) return qsCache[k];
+  try { qsCache[k] = await B.getQs(k); } catch (e) { console.warn('qs', e); qsCache[k] = null; }
+  return qsCache[k];
+}
+function qsCurrentDay() {
+  const L = cur(); if (!L) return 1;
+  let u = L.body[st.ui];
+  if (!isMob()) { const top = $('#reader').getBoundingClientRect().top + 80; const secs = $$('#reader .unit'); const vis = secs.filter(s => s.getBoundingClientRect().top <= top).pop() || secs[0]; if (vis) u = L.body.find(x => x.id === vis.id) || u; }
+  return (u && qsDayOf(u)) || 1;
+}
+function qsText(L, day, d) {
+  return `[${L.no}과 ${qsDayLabel(day.day)} ${day.title} · 나눔 질문]\n` + day.qs.map((q, i) => `${i + 1}. ${q.q}`).join('\n');
+}
+async function renderQs() {
+  const box = $('#qs'); const L = cur(); if (!box || !L) return;
+  const auds = qsAuds(); const a = qsAud();
+  if (!a) { box.innerHTML = `<p class="empty">이 교재에는 아직 나눔 질문이 없습니다.<br><small>지금은 「제자의 삶」 1~12과에 30~40대 남성용 질문이 들어 있습니다.</small></p>`; return; }
+  if (!L.no || L.no < 1) { box.innerHTML = `<p class="empty">나눔 질문은 각 과(1~12과)에 있습니다.</p>`; return; }
+  box.innerHTML = '<p class="muted qs-loading">불러오는 중…</p>';
+  const data = await qsLoad(a.id, L.no);
+  if (cur() !== L) return;
+  const staff = ['admin', 'teacher'].includes(st.me && st.me.role);
+  const admin = isAdmin() && B.kind === 'firebase';
+  const audBar = `<div class="qs-aud" role="group" aria-label="대상">${auds.map(x => `<button type="button" data-qs-aud="${x.id}" class="${x.id === a.id ? 'on' : ''}">${x.icon} ${esc(x.ko)}</button>`).join('')}</div>`;
+  if (!data || !data.days || !data.days.length) { box.innerHTML = audBar + `<p class="empty">${L.no}과의 ${esc(a.ko)} 나눔 질문이 아직 없습니다.</p>`; return; }
+  const days = data.days; if (!qsDay || !days.some(d => d.day === qsDay)) qsDay = qsCurrentDay();
+  const day = days.find(d => d.day === qsDay) || days[0];
+  const tabs = `<div class="seg qs-days" role="tablist">${days.map(d => `<button type="button" data-qs-d="${d.day}" class="${d.day === day.day ? 'on' : ''}">${qsDayLabel(d.day)}</button>`).join('')}</div>`;
+  const head = `<div class="qs-head"><small>${L.no}과 · ${qsDayLabel(day.day)}</small><b>${esc(day.title)}</b></div>`;
+  if (qsEdit && admin) {
+    box.innerHTML = audBar + tabs + head + `<div class="qs-edit">
+      <label>인도자 팁<textarea id="qs-e-tip" rows="2">${esc(day.tip || '')}</textarea></label>
+      ${day.qs.map((q, i) => `<label class="qs-e-row"><select data-qe-k="${i}">${Object.keys(QK).map(k => `<option ${k === q.k ? 'selected' : ''}>${k}</option>`).join('')}</select><textarea data-qe="${i}" rows="4">${esc(q.q)}</textarea></label>`).join('')}
+      <div class="modal-act"><button type="button" class="ghost" data-qs-act="cancel">취소</button><button type="button" class="primary" data-qs-act="save">저장</button></div></div>`;
+    return;
+  }
+  box.innerHTML = audBar + tabs + head +
+    (staff && day.tip ? `<p class="qs-tip"><b>인도 팁</b> ${esc(day.tip)}</p>` : '') +
+    `<ol class="qs-list">${day.qs.map((q, i) => `<li class="qs-q k-${QK[q.k] || 'open'}"><span class="qs-k">${esc(q.k)}</span><p>${esc(q.q)}</p><button type="button" class="qs-copy" data-qs-copy="${i}" aria-label="이 질문 복사">⧉</button></li>`).join('')}</ol>
+    <div class="qs-foot"><button type="button" class="ghost" data-qs-act="copyall">⧉ 오늘 질문 모두 복사 <small>(단톡방에 붙여 넣기)</small></button>
+    ${admin ? `<div class="qs-admin"><button type="button" class="ghost" data-qs-act="edit">✎ 고치기</button>
+      <label class="qs-vis"><input type="checkbox" data-qs-act="vis" ${data.access !== 'staff' ? 'checked' : ''}> 훈련생에게도 보이기</label></div>` : ''}
+    <p class="muted small">질문은 ${esc(a.ko)} 소그룹을 위한 초안입니다. 모임 상황에 맞게 골라 쓰세요.${staff ? '' : ''}</p></div>`;
+}
+$('#qs').addEventListener('click', async e => {
+  const L = cur(); const a = qsAud(); if (!L || !a) return;
+  const au = e.target.closest('[data-qs-aud]'); if (au) { Store.setPref('qsAud', au.dataset.qsAud); renderQs(); return; }
+  const dd = e.target.closest('[data-qs-d]'); if (dd) { qsDay = +dd.dataset.qsD; qsEdit = false; renderQs(); return; }
+  const data = qsCache[qsDoc(a.id, L.no)]; const day = data && data.days.find(d => d.day === qsDay);
+  const cp = e.target.closest('[data-qs-copy]');
+  const copy = t => (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('복사했습니다'), () => toast('복사하지 못했습니다'));
+  if (cp && day) { copy(day.qs[+cp.dataset.qsCopy].q); return; }
+  const act = e.target.closest('[data-qs-act]'); if (!act || !day) return;
+  const k = act.dataset.qsAct;
+  if (k === 'copyall') copy(qsText(L, day));
+  if (k === 'edit') { qsEdit = true; renderQs(); }
+  if (k === 'cancel') { qsEdit = false; renderQs(); }
+  if (k === 'save') {
+    day.tip = $('#qs-e-tip').value.trim();
+    $$('#qs [data-qe]').forEach(t => { const i = +t.dataset.qe; day.qs[i].q = t.value.trim(); day.qs[i].k = $(`#qs [data-qe-k="${i}"]`).value; });
+    const { access, ...obj } = data;
+    try { await B.putQs(qsDoc(a.id, L.no), obj, access || 'all'); toast('나눔 질문을 고쳤습니다'); qsEdit = false; renderQs(); }
+    catch (err) { toast('저장하지 못했습니다: ' + (err.code || err.message)); }
+  }
+});
+$('#qs').addEventListener('change', async e => {
+  const v = e.target.closest('[data-qs-act="vis"]'); if (!v) return;
+  const L = cur(); const a = qsAud(); const data = qsCache[qsDoc(a.id, L.no)]; if (!data) return;
+  const access = v.checked ? 'all' : 'staff';
+  if (!confirm(v.checked ? `${L.no}과 나눔 질문을 훈련생에게도 보이게 할까요?` : `${L.no}과 나눔 질문을 강사·관리자만 보게 할까요?`)) { v.checked = !v.checked; return; }
+  const { access: _, ...obj } = data;
+  try { await B.putQs(qsDoc(a.id, L.no), obj, access); data.access = access; toast(v.checked ? '훈련생에게도 보입니다' : '강사·관리자만 봅니다'); }
+  catch (err) { v.checked = !v.checked; toast('바꾸지 못했습니다: ' + (err.code || err.message)); }
+});
+/* 본문의 '💬 n일 나눔 질문' 버튼 → 오른쪽(폰은 아래) 나눔 탭 */
+$('#reader').addEventListener('click', e => {
+  const b = e.target.closest('[data-qs-day]'); if (!b) return;
+  setPanelTab('qs'); qsDay = +b.dataset.qsDay; renderQs(); openPanel(); if (isMob()) tabOn('notes');
+});
+
 /* ---------------- 음성 듣기 ---------------- */
 function setupTTS() {
   if (tts) return;

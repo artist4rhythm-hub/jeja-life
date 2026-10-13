@@ -178,6 +178,9 @@ async function FirebaseBackend(config) {
     // access: 'all'(모든 사용자) | 'staff'(강사·관리자만) — 보안 규칙이 이 값으로 읽기를 막음
     putIndex: (obj, doc = '_index', access = 'all') => F.setDoc(d('lessons', doc), { json: JSON.stringify(obj), access, at: Date.now() }),
     putLesson: (lid, obj, access = 'all') => F.setDoc(d('lessons', lid), { json: JSON.stringify(obj), access, at: Date.now() }),
+    // 나눔 질문: lessons/_qs_{교재묶음}_{대상}_{과번호} { json, access } — 같은 교재의 모든 판이 함께 씀
+    async getQs(doc) { try { const x = await F.getDoc(d('lessons', doc)); return x.exists() ? { ...JSON.parse(x.data().json), access: x.data().access || 'all' } : null; } catch (e) { if (e.code === 'permission-denied') return null; throw e; } },
+    putQs: (doc, obj, access = 'all') => F.setDoc(d('lessons', doc), { json: JSON.stringify(obj), access, at: Date.now() }),
     // 번역: lessons/{과}/tr/{언어} { json, access }
     async getTr(lid, lang) { try { const x = await F.getDoc(d('lessons', lid, 'tr', lang)); return x.exists() ? JSON.parse(x.data().json) : null; } catch (e) { if (e.code === 'permission-denied') return null; throw e; } },
     putTr: (lid, lang, obj, access = 'all') => F.setDoc(d('lessons', lid, 'tr', lang), { json: JSON.stringify(obj), access, at: Date.now() }),
@@ -211,6 +214,8 @@ function LocalBackend() {
     getIndex: (doc = '_index') => fetch(`data/${doc === '_index' ? 'index' : 'index' + doc.slice(6)}.json`).then(r => r.ok ? r.json() : null),
     setBookAccess: async () => {},
     getTr: (lid, lang) => fetch(`data/tr/tr_${lang}_${lid}.json`).then(r => r.ok ? r.json() : null).catch(() => null),
+    getQs: doc => fetch(`data/qs/${doc.replace(/^_/, '')}.json`).then(r => r.ok ? r.json() : null).catch(() => null),
+    putQs: async () => {},
     putTr: async () => {},
     getLesson: lid => fetch(`data/${lid}.json`).then(r => { if (!r.ok) throw new Error(lid + ' 데이터가 없습니다'); return r.json(); }),
     pageUrl: async p => `pages/p${p}.webp`,
