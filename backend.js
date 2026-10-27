@@ -108,7 +108,7 @@ async function FirebaseBackend(config) {
     },
     saveMark: (gid, g) => F.setDoc(d('users', u(), 'marks', gid), g),
     deleteMark: gid => F.deleteDoc(d('users', u(), 'marks', gid)),
-    setAnswer: (id, t) => t ? F.setDoc(d('users', u(), 'answers', id), { t, at: Date.now() }) : F.deleteDoc(d('users', u(), 'answers', id)),
+    setAnswer: (id, a) => a ? F.setDoc(d('users', u(), 'answers', id), a) : F.deleteDoc(d('users', u(), 'answers', id)),
     setDone: (id, v) => v ? F.setDoc(d('users', u(), 'done', id), { at: Date.now() }) : F.deleteDoc(d('users', u(), 'done', id)),
     setPrefs: p => F.setDoc(d('users', u(), 'prefs', 'main'), p),
 
@@ -226,7 +226,7 @@ function LocalBackend() {
     },
     saveMark: (gid, g) => { db.marks[gid] = g; return save(); },
     deleteMark: gid => { delete db.marks[gid]; return save(); },
-    setAnswer: (id, t) => { if (t) db.answers[id] = { t, at: Date.now() }; else delete db.answers[id]; return save(); },
+    setAnswer: (id, a) => { if (a) db.answers[id] = a; else delete db.answers[id]; return save(); },
     setDone: (id, v) => { if (v) db.done[id] = Date.now(); else delete db.done[id]; return save(); },
     setPrefs: p => { db.prefs = p; return save(); },
     putPhoto: (id, d) => { db.photos = db.photos || {}; db.photos[id] = d; return save(); },

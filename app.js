@@ -33,9 +33,13 @@ const Store = (() => {
     setLook(gid, o) { mem.marks.forEach((m, i) => { if (m.gid === gid) { if (o.c) m.c = o.c; } }); const f = mem.marks.find(m => m.gid === gid); if (f && o.nc) f.nc = o.nc; return B.saveMark(gid, groupDoc(gid)).catch(fail); },
     setNote(gid, note, photos) { let first = true; mem.marks.forEach(m => { if (m.gid === gid) { m.note = first ? note : ''; if (first && photos) m.photos = photos; first = false; } }); return B.saveMark(gid, groupDoc(gid)).catch(fail); },
     answers: () => mem.answers,
-    async setAnswer(id, t) {
-      const v = t.trim() ? t : ''; if (v) mem.answers[id] = { t: v, at: Date.now() }; else delete mem.answers[id];
-      try { await B.setAnswer(id, v); return true; } catch (e) { console.error(e); return false; }
+    /* 답: 글(t) + 손글씨(ink, JSON 문자열). 한쪽만 바꿀 땐 다른 쪽은 undefined로 넘기면 그대로 둠 */
+    async setAnswer(id, t, ink) {
+      const cur = mem.answers[id] || {};
+      const tv = t === undefined ? (cur.t || '') : (t.trim() ? t : '');
+      const iv = ink === undefined ? (cur.ink || '') : (ink || '');
+      if (tv || iv) mem.answers[id] = { t: tv, ...(iv ? { ink: iv } : {}), at: Date.now() }; else delete mem.answers[id];
+      try { await B.setAnswer(id, mem.answers[id] || null); return true; } catch (e) { console.error(e); return false; }
     },
     done: () => mem.done,
     setDone(uid, v) { if (v) mem.done[uid] = Date.now(); else delete mem.done[uid]; B.setDone(uid, v).catch(fail); },
@@ -165,9 +169,9 @@ function blockHTML(b, prev) {
     case 'right': return `<p class="blk right" ${A}>${pg}${tx(b.text)}</p>`;
     case 'q': {
       const a = Store.answers()[b.id];
-      return `<p class="blk q" ${A}>${pg}${tx(b.text)}</p><textarea class="ans" data-for="${b.id}" rows="3" aria-label="답 쓰기" placeholder="여기에 답을 적어보세요">${a ? esc(a.t) : ''}</textarea>`;
+      return `<p class="blk q" ${A}>${pg}${tx(b.text)}</p>${ansBoxHTML(b.id, 3, '여기에 답을 적어보세요')}`;
     }
-    case 'lines': return prev && prev.t === 'q' ? '' : `<textarea class="ans" data-for="${b.id}" rows="${b.n}" aria-label="답 쓰기">${esc((Store.answers()[b.id] || {}).t || '')}</textarea>`;
+    case 'lines': return prev && prev.t === 'q' ? '' : ansBoxHTML(b.id, b.n, '');
     case 'table': {
       const rows = b.rows.map(r => (!r[0] && !r[r.length - 1]) ? `<tr class="band"><td colspan="${r.length}">${esc(r.find(Boolean) || '')}</td></tr>`
         : `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('');
@@ -242,7 +246,7 @@ function renderReader() {
   if (tts) tts.rerendered();
   $('#top-lesson').textContent = (lessonNo(L) ? L.no + '과 ' : '') + L.title;
   $('#top-book').textContent = curBook().short || curBook().title;
-  applyMarks(); hydrateImages(r); observeBlocks(); applyTr();
+  applyMarks(); hydrateImages(r); observeBlocks(); applyTr(); hydrateAns();
   const chip = $('.chips .on', r); if (chip) chip.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
 const short = t => { const s = plain(t).replace(/[.?!]$/, ''); return s.length > 13 ? s.slice(0, 12) + '…' : s; };
@@ -302,13 +306,192 @@ $('#reader').addEventListener('click', e => {
 let ansT = {};
 $('#reader').addEventListener('input', e => {
   const ta = e.target.closest('textarea.ans'); if (!ta) return;
+  grow(ta);
   clearTimeout(ansT[ta.dataset.for]);
   ansT[ta.dataset.for] = setTimeout(async () => {
     const ok = await Store.setAnswer(ta.dataset.for, ta.value);
-    let s = ta.nextElementSibling; if (!s || !s.classList.contains('saved')) { s = document.createElement('div'); s.className = 'saved'; ta.after(s); }
-    s.textContent = ok ? '저장됨' : '저장하지 못했습니다 (인터넷 확인)'; renderNotes();
+    setSaved(ta.dataset.for, ok); renderNotes();
   }, 500);
 });
+
+/* ---------------- 답 칸: 손글씨 글씨체 · 쓴 만큼 늘어남 · 펜 필기(그림판) ---------------- */
+const AFONTS = [['gaegu', '개구', '귀여운 손글씨'], ['pen', '나눔펜', '펜으로 쓴 글씨'], ['melody', '하이멜로디', '동글동글'], ['gamja', '감자꽃', '또박또박'], ['base', '기본', '본문과 같은 글씨']];
+function ansBoxHTML(id, rows, ph) {
+  const a = Store.answers()[id] || {};
+  return `<div class="ans-box" data-box="${id}"><textarea class="ans" data-for="${id}" rows="${rows}" aria-label="답 쓰기"${ph ? ` placeholder="${ph}"` : ''}>${esc(a.t || '')}</textarea>
+<div class="ans-bar"><span class="saved" aria-live="polite"></span><button type="button" class="ans-b" data-afont-open aria-label="답 글씨체 바꾸기"><span class="ans-font">가</span> 글씨체</button><button type="button" class="ans-b" data-ink-open="${id}" aria-pressed="${a.ink ? 'true' : 'false'}">✍ 손글씨</button></div>
+<div class="ink" data-ink="${id}" ${a.ink ? '' : 'hidden'}>
+<div class="ink-tools" role="toolbar" aria-label="손글씨 도구">${INK_COLORS.map(([c, n]) => `<button type="button" class="ink-c" data-ink-c="${c}" style="--c:${c}" aria-label="${n}"></button>`).join('')}<span class="ink-sep"></span>${INK_SIZES.map(([w, n]) => `<button type="button" class="ink-w" data-ink-w="${w}" aria-label="${n}"><i style="--w:${Math.round(w * 1.6)}px"></i></button>`).join('')}<span class="ink-sep"></span><button type="button" data-ink-t="erase" aria-label="지우개">지우개</button><button type="button" data-ink-t="undo" aria-label="되돌리기">↶</button><button type="button" data-ink-t="clear">모두 지우기</button><button type="button" data-ink-t="more">＋ 칸</button><span class="grow"></span><button type="button" class="primary" data-ink-t="done">완료</button></div>
+<canvas aria-label="손글씨 쓰는 곳"></canvas><button type="button" class="ink-start" data-ink-t="start">✍ 눌러서 쓰기</button></div></div>`;
+}
+function setSaved(id, ok) { const s = $(`.ans-box[data-box="${id}"] .saved`); if (s) { s.textContent = ok ? '저장됨' : '저장하지 못했습니다 (인터넷 확인)'; s.classList.toggle('bad', !ok); } }
+function applyAFont() { document.body.dataset.afont = Store.pref('ansFont', 'gaegu'); growAll(); }
+/* 쓴 만큼 칸이 아래로 늘어남 (스크롤 위치가 튀지 않게 지킴) */
+function grow(ta) {
+  if (!ta.offsetParent) return;
+  const sc = document.scrollingElement, r = $('#reader'), a = sc.scrollTop, b = r.scrollTop;
+  ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 2) + 'px';
+  sc.scrollTop = a; r.scrollTop = b;
+}
+function growAll() { requestAnimationFrame(() => $$('#reader textarea.ans').forEach(grow)); }
+if (document.fonts) document.fonts.ready.then(growAll);
+
+/* 글씨체 고르기 */
+const afPop = document.createElement('div'); afPop.className = 'afont-pop'; afPop.hidden = true; afPop.setAttribute('role', 'menu'); document.body.appendChild(afPop);
+function openAFont(btn) {
+  const cur = Store.pref('ansFont', 'gaegu');
+  afPop.innerHTML = `<div class="afp-h">답 칸 글씨체</div>` + AFONTS.map(([k, n, d]) => `<button type="button" role="menuitemradio" aria-checked="${k === cur}" data-afont="${k}" class="${k === cur ? 'on' : ''}"><span class="afp-s af-${k}">하나님은 사랑이십니다</span><small>${n} · ${d}</small></button>`).join('');
+  afPop.hidden = false;
+  const r = btn.getBoundingClientRect(), w = afPop.offsetWidth, h = afPop.offsetHeight;
+  afPop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.right - w)) + 'px';
+  afPop.style.top = (r.bottom + h + 8 < innerHeight ? r.bottom + 6 : Math.max(8, r.top - h - 6)) + 'px';
+}
+afPop.addEventListener('click', e => { const b = e.target.closest('[data-afont]'); if (!b) return; Store.setPref('ansFont', b.dataset.afont); applyAFont(); afPop.hidden = true; renderNotes(); toast('답 칸 글씨체: ' + AFONTS.find(x => x[0] === b.dataset.afont)[1]); });
+document.addEventListener('pointerdown', e => { if (!afPop.hidden && !e.target.closest('.afont-pop, [data-afont-open]')) afPop.hidden = true; }, true);
+
+/* 손글씨: 폭 1000 기준 좌표로 저장 → 폰·아이패드·노트북 어디서나 같은 모양으로 보임 */
+const INK_W = 1000, INK_LINE = 46, INK_H0 = 368;
+const INK_COLORS = [['#23272b', '검정'], ['#1f4fbf', '파랑'], ['#d23a3a', '빨강'], ['#1f7a4a', '초록'], ['#8a3fc0', '보라'], ['#e07a00', '주황']];
+const INK_SIZES = [[2.2, '가늘게'], [3.8, '보통'], [6.5, '굵게']];
+const inkPen = { c: '#23272b', w: 3.8, erase: false };
+const inkState = new Map();
+let inkActive = null, inkDrawing = null, penSeen = false;
+function inkData(id) {
+  if (!inkState.has(id)) {
+    const a = Store.answers()[id]; let d = null; try { d = a && a.ink ? JSON.parse(a.ink) : null; } catch (e) { console.warn(e); }
+    inkState.set(id, d && Array.isArray(d.s) ? { h: Math.max(INK_H0, d.h || INK_H0), s: d.s, undo: [] } : { h: INK_H0, s: [], undo: [] });
+  }
+  return inkState.get(id);
+}
+function strokeDraw(g, s, from = 1) {
+  const p = s.p, n = p.length / 3; g.strokeStyle = s.c; g.fillStyle = s.c; g.lineCap = 'round'; g.lineJoin = 'round';
+  const W = pr => s.w * (0.55 + pr / 10);
+  if (n === 1) { g.beginPath(); g.arc(p[0], p[1], W(p[2]) / 2, 0, 7); g.fill(); return; }
+  for (let i = Math.max(1, from); i < n; i++) {
+    const x0 = p[i * 3 - 3], y0 = p[i * 3 - 2], x1 = p[i * 3], y1 = p[i * 3 + 1];
+    const xa = i > 1 ? (p[i * 3 - 6] + x0) / 2 : x0, ya = i > 1 ? (p[i * 3 - 5] + y0) / 2 : y0;
+    const last = i === n - 1 && s.done;
+    g.lineWidth = W((p[i * 3 - 1] + p[i * 3 + 2]) / 2);
+    g.beginPath(); g.moveTo(xa, ya); g.quadraticCurveTo(x0, y0, last ? x1 : (x0 + x1) / 2, last ? y1 : (y0 + y1) / 2); g.stroke();
+  }
+}
+function drawInk(pad) {
+  const d = inkData(pad.dataset.ink), cv = $('canvas', pad);
+  const cw = cv.clientWidth; if (!cw) return;
+  const k = cw / INK_W, dpr = Math.min(3, devicePixelRatio || 1), ch = Math.round(d.h * k);
+  cv.style.height = ch + 'px';
+  const W = Math.round(cw * dpr), H = Math.round(ch * dpr);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const g = cv.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H); g.setTransform(dpr * k, 0, 0, dpr * k, 0, 0);
+  g.strokeStyle = '#e4dcc4'; g.lineWidth = 1.2 / k;
+  for (let y = INK_LINE; y < d.h; y += INK_LINE) { g.beginPath(); g.moveTo(14, y); g.lineTo(INK_W - 14, y); g.stroke(); }
+  d.s.forEach(s => strokeDraw(g, { ...s, done: true }));
+}
+function inkTools(pad) {
+  $$('[data-ink-c]', pad).forEach(b => b.classList.toggle('on', !inkPen.erase && b.dataset.inkC === inkPen.c));
+  $$('[data-ink-w]', pad).forEach(b => b.classList.toggle('on', +b.dataset.inkW === inkPen.w));
+  $('[data-ink-t="erase"]', pad).classList.toggle('on', inkPen.erase);
+  $('[data-ink-t="undo"]', pad).disabled = !inkData(pad.dataset.ink).undo.length;
+  pad.classList.toggle('erasing', inkPen.erase);
+}
+function inkActivate(pad) {
+  if (inkActive && inkActive !== pad) inkDone(inkActive);
+  inkActive = pad; pad.hidden = false; pad.classList.add('active'); inkTools(pad); drawInk(pad);
+  const b = $(`[data-ink-open="${pad.dataset.ink}"]`); if (b) b.setAttribute('aria-pressed', 'true');
+}
+function inkDone(pad) {
+  pad.classList.remove('active'); if (inkActive === pad) inkActive = null;
+  const id = pad.dataset.ink; inkSaveNow(id);
+  if (!inkData(id).s.length) { pad.hidden = true; const b = $(`[data-ink-open="${id}"]`); if (b) b.setAttribute('aria-pressed', 'false'); }
+}
+const inkSaveT = {};
+function inkSave(id) { clearTimeout(inkSaveT[id]); inkSaveT[id] = setTimeout(() => inkSaveNow(id), 700); }
+async function inkSaveNow(id) {
+  clearTimeout(inkSaveT[id]); const d = inkData(id);
+  const json = d.s.length ? JSON.stringify({ v: 1, h: d.h, s: d.s.map(({ c, w, p }) => ({ c, w, p })) }) : '';
+  const prev = (Store.answers()[id] || {}).ink || '';
+  if (json === prev) return;
+  if (json.length > 850000) { toast('손글씨가 너무 많아 더 저장할 수 없습니다. 다음 칸에 이어 써 주세요'); return; }
+  const ok = await Store.setAnswer(id, undefined, json); setSaved(id, ok); renderNotes();
+}
+function inkPt(e, cv) { const r = cv.getBoundingClientRect(), k = r.width / INK_W; return [Math.round((e.clientX - r.left) / k), Math.round((e.clientY - r.top) / k), e.pointerType === 'pen' ? Math.max(1, Math.min(9, Math.round((e.pressure || 0.5) * 9))) : 5]; }
+function inkErase(d, x, y) {
+  const R = 16 + inkPen.w, hit = [];
+  d.s.forEach((s, i) => { for (let j = 0; j < s.p.length; j += 3) if (Math.abs(s.p[j] - x) < R && Math.abs(s.p[j + 1] - y) < R) { hit.push(i); break; } });
+  if (!hit.length) return false;
+  const gone = hit.map(i => [i, d.s[i]]); hit.reverse().forEach(i => d.s.splice(i, 1)); d.undo.push({ erase: gone }); return true;
+}
+function inkGrowIfNeeded(pad, d, y) { if (y > d.h - 80) { d.h += INK_LINE * 5; drawInk(pad); return true; } return false; }
+const reader0 = $('#reader');
+reader0.addEventListener('pointerdown', e => {
+  const cv = e.target.closest('.ink canvas'); if (!cv) return;
+  const pad = cv.parentElement;
+  if (e.pointerType === 'pen') penSeen = true;
+  if (!pad.classList.contains('active')) { if (e.pointerType !== 'pen') return; inkActivate(pad); }
+  if (e.pointerType === 'touch' && penSeen) return; // 펜을 쓰는 중에는 손바닥이 닿아도 그려지지 않게
+  if (e.button > 0) return;
+  e.preventDefault(); try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+  const d = inkData(pad.dataset.ink), pt = inkPt(e, cv);
+  if (inkPen.erase) { inkDrawing = { pad, cv, d, erase: true, pid: e.pointerId, hit: false }; if (inkErase(d, pt[0], pt[1])) { inkDrawing.hit = true; drawInk(pad); } return; }
+  const s = { c: inkPen.c, w: inkPen.w, p: pt };
+  d.s.push(s); inkDrawing = { pad, cv, d, s, pid: e.pointerId };
+  const g = cv.getContext('2d'); strokeDraw(g, s);
+});
+reader0.addEventListener('pointermove', e => {
+  if (!inkDrawing || e.pointerId !== inkDrawing.pid) return; e.preventDefault();
+  const { pad, cv, d, s } = inkDrawing; const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  for (const ev of (evs.length ? evs : [e])) {
+    const pt = inkPt(ev, cv);
+    if (inkDrawing.erase) { if (inkErase(d, pt[0], pt[1])) { inkDrawing.hit = true; drawInk(pad); } continue; }
+    const n = s.p.length; if (Math.hypot(pt[0] - s.p[n - 3], pt[1] - s.p[n - 2]) < 2) continue;
+    s.p.push(...pt);
+    if (!inkGrowIfNeeded(pad, d, pt[1])) strokeDraw(cv.getContext('2d'), s, s.p.length / 3 - 1);
+  }
+});
+function inkEnd(e) {
+  if (!inkDrawing || (e && e.pointerId !== inkDrawing.pid)) return;
+  const { pad, d, s, erase, hit } = inkDrawing; inkDrawing = null;
+  if (!erase) { d.undo.push({ add: s }); if (d.undo.length > 200) d.undo.shift(); }
+  if (!erase || hit) { drawInk(pad); inkSave(pad.dataset.ink); }
+  inkTools(pad);
+}
+reader0.addEventListener('pointerup', inkEnd); reader0.addEventListener('pointercancel', inkEnd);
+/* 아이패드: 애플펜슬은 바로 쓰기, 손가락은 화면 넘기기 (쓰기 모드에선 손가락도 쓰기) */
+reader0.addEventListener('touchstart', e => {
+  const cv = e.target.closest && e.target.closest('.ink canvas'); if (!cv) return;
+  const t = e.touches[0]; const active = cv.parentElement.classList.contains('active');
+  if (t.touchType === 'stylus' || (active && !penSeen)) e.preventDefault();
+}, { passive: false });
+reader0.addEventListener('click', e => {
+  const fo = e.target.closest('[data-afont-open]'); if (fo) { if (afPop.hidden) openAFont(fo); else afPop.hidden = true; return; }
+  const op = e.target.closest('[data-ink-open]');
+  if (op) { const pad = $(`.ink[data-ink="${op.dataset.inkOpen}"]`); if (pad.classList.contains('active')) inkDone(pad); else { inkActivate(pad); pad.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } return; }
+  const pad = e.target.closest('.ink'); if (!pad) return;
+  const c = e.target.closest('[data-ink-c]'); if (c) { inkPen.c = c.dataset.inkC; inkPen.erase = false; inkTools(pad); return; }
+  const w = e.target.closest('[data-ink-w]'); if (w) { inkPen.w = +w.dataset.inkW; inkTools(pad); return; }
+  const t = e.target.closest('[data-ink-t]'); if (!t) return;
+  const d = inkData(pad.dataset.ink);
+  switch (t.dataset.inkT) {
+    case 'start': inkActivate(pad); break;
+    case 'erase': inkPen.erase = !inkPen.erase; inkTools(pad); break;
+    case 'undo': { const u = d.undo.pop(); if (!u) break; if (u.add) { const i = d.s.lastIndexOf(u.add); if (i >= 0) d.s.splice(i, 1); } else if (u.erase) u.erase.forEach(([i, s]) => d.s.splice(i, 0, s)); else if (u.clear) d.s = u.clear; drawInk(pad); inkTools(pad); inkSave(pad.dataset.ink); break; }
+    case 'clear': if (d.s.length && confirm('이 칸의 손글씨를 모두 지울까요? (↶로 되돌릴 수 있어요)')) { d.undo.push({ clear: d.s }); d.s = []; drawInk(pad); inkTools(pad); inkSave(pad.dataset.ink); } break;
+    case 'more': d.h += INK_LINE * 5; drawInk(pad); inkSave(pad.dataset.ink); break;
+    case 'done': inkDone(pad); break;
+  }
+});
+/* 그린 뒤 화면 다시 그리기 */
+function hydrateAns() { growAll(); requestAnimationFrame(() => $$('#reader .ink:not([hidden])').forEach(drawInk)); }
+function refreshAns() {
+  $$('#reader textarea.ans').forEach(ta => { if (document.activeElement !== ta) { const a = Store.answers()[ta.dataset.for]; ta.value = a ? (a.t || '') : ''; } });
+  $$('#reader .ink').forEach(pad => {
+    if (pad.classList.contains('active')) return; const id = pad.dataset.ink; inkState.delete(id);
+    const has = !!(Store.answers()[id] || {}).ink; pad.hidden = !has;
+    const b = $(`[data-ink-open="${id}"]`); if (b) b.setAttribute('aria-pressed', has ? 'true' : 'false');
+  });
+  hydrateAns();
+}
+let ansResizeT; addEventListener('resize', () => { clearTimeout(ansResizeT); ansResizeT = setTimeout(hydrateAns, 200); });
 
 /* ---------------- 형광펜 ---------------- */
 const bar = $('#hlbar');
@@ -397,7 +580,7 @@ function drawEnd() {
   const r = segmentsFromSelection(); if (!r) { getSelection().removeAllRanges(); return; }
   selSegs = r.segs; addMark(penColor);
 }
-const skipTarget = t => t.closest('textarea, input, button, a, mark.hl, .unit-extra, .vref');
+const skipTarget = t => t.closest('textarea, input, button, a, mark.hl, .unit-extra, .vref, .ans-box');
 const reader = $('#reader');
 if (IOS) {
   reader.addEventListener('touchstart', e => {
@@ -666,7 +849,7 @@ function palInit(el, getCur, onPick, persist) {
 function renderNotes() {
   const groups = {}; Store.marks().forEach(m => { (groups[m.gid] = groups[m.gid] || []).push(m); });
   const items = Object.values(groups).map(g => ({ kind: 'mark', lid: g[0].lid, block: g[0].block, c: g[0].c, tl: g[0].tl, quote: g.map(x => x.quote).join(' … '), note: g[0].note, ph: (g[0].photos || []).length, at: g[0].at }));
-  Object.entries(Store.answers()).forEach(([id, a]) => items.push({ kind: 'ans', lid: id.slice(0, 3), block: id, note: a.t, at: a.at }));
+  Object.entries(Store.answers()).forEach(([id, a]) => items.push({ kind: 'ans', lid: id.slice(0, 3), block: id, note: a.t || '', ink: !!a.ink, at: a.at }));
   const byL = {}; items.forEach(i => (byL[i.lid] = byL[i.lid] || []).push(i));
   const order = st.index.lessons.map(l => l.id).filter(id => byL[id]);
   const n = $('#notes');
@@ -676,7 +859,7 @@ function renderNotes() {
     const L = st.index.lessons.find(l => l.id === lid);
     const list = byL[lid].sort((a, b) => a.block < b.block ? -1 : a.block > b.block ? 1 : a.at - b.at);
     return `<div class="ngroup">${lessonNo(L) ? L.no + '과 ' : ''}${esc(L.title)} · ${list.length}</div>` + list.map(i => i.kind === 'ans'
-      ? `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}"><span class="kind">내 답</span><br>${esc(i.note.slice(0, 120))}</button>`
+      ? `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}"><span class="kind">내 답</span>${i.ink ? ' <span class="kind">✍ 손글씨</span>' : ''}<br><span class="ans-font">${esc(i.note.slice(0, 120))}</span></button>`
       : `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}">${i.tl && TRL[i.tl] ? `<span class="kind tlk tl-${i.tl}">${TRL[i.tl].tag}</span> ` : ''}<q class="${markCls(i.c)}" dir="auto">${esc(i.quote.length > 70 ? i.quote.slice(0, 70) + '…' : i.quote)}</q>${i.note ? esc(i.note) : ''}${i.ph ? ` <span class="kind">📷 ${i.ph}</span>` : ''}</button>`).join('');
   }).join('')}</div>`;
 }
@@ -812,7 +995,7 @@ async function search(q) {
   if (st.scope === 'mine') {
     const g = {}; Store.marks().forEach(m => { const k = m.gid; g[k] = g[k] || m; });
     Object.values(g).forEach(m => { const t = (m.note || '') + ' ' + m.quote; const i = t.indexOf(q); if (i >= 0) out.push({ lid: m.lid, block: m.block, label: '내 메모', text: snip(t, i) }); });
-    Object.entries(Store.answers()).forEach(([id, a]) => { const i = a.t.indexOf(q); if (i >= 0) out.push({ lid: id.slice(0, 3), block: id, label: '내 답', text: snip(a.t, i) }); });
+    Object.entries(Store.answers()).forEach(([id, a]) => { const t = a.t || ''; const i = t.indexOf(q); if (i >= 0) out.push({ lid: id.slice(0, 3), block: id, label: '내 답', text: snip(t, i) }); });
     Store.atts().forEach(a => { if (!st.lessons[a.lid]) return; const t = a.title + ' ' + (a.text || '') + ' ' + (a.url || ''); const i = t.indexOf(q); if (i >= 0) out.push({ lid: a.lid, block: (st.lessons[a.lid].units.find(u => u.id === a.uid) || { blocks: [{}] }).blocks[0].id, label: '추가 자료', text: snip(t, i) }); });
   } else {
     ready.filter(l => st.scope !== 'lesson' || l.id === st.lid).forEach(l => {
@@ -854,7 +1037,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideBar();
 
 /* 글자 크기 */
 const FS = [15, 16, 17, 18, 20, 22];
-function setFs(v) { document.documentElement.style.setProperty('--fs', v + 'px'); Store.setPref('fs', v); }
+function setFs(v) { document.documentElement.style.setProperty('--fs', v + 'px'); Store.setPref('fs', v); growAll(); }
 $('#fs-up').addEventListener('click', () => { const i = FS.indexOf(Store.pref('fs', 17)); setFs(FS[Math.min(FS.length - 1, i + 1)]); });
 $('#fs-dn').addEventListener('click', () => { const i = FS.indexOf(Store.pref('fs', 17)); setFs(FS[Math.max(0, i - 1)]); });
 
@@ -971,7 +1154,7 @@ drop.addEventListener('drop', async e => {
 let liveT = null, pendingParts = {}, unwatchAtts = null, attsFor = null;
 function busyEditing() {
   const ae = document.activeElement;
-  return drawing || !bar.hidden || (!pop.hidden && pop.classList.contains('editing')) || !getSelection().isCollapsed;
+  return drawing || inkDrawing || !bar.hidden || (!pop.hidden && pop.classList.contains('editing')) || !getSelection().isCollapsed;
 }
 function flushLive() {
   clearTimeout(liveT);
@@ -980,7 +1163,7 @@ function flushLive() {
   if (parts.marks || parts.answers || parts.done) {
     if (parts.marks) applyMarks();
     renderNotes(); renderToc();
-    if (parts.answers) $$('#reader textarea.ans').forEach(ta => { if (document.activeElement !== ta) { const a = Store.answers()[ta.dataset.for]; ta.value = a ? a.t : ''; } });
+    if (parts.answers) refreshAns();
     if (parts.done && isMob()) $$('.chips [data-unit]').forEach(c => { const u = cur() && cur().body[+c.dataset.unit]; if (u) c.classList.toggle('done', !!Store.done()[u.id]); });
   }
   if (parts.atts) refreshAtts();
@@ -1001,7 +1184,7 @@ async function syncNow(force) {
   try {
     await Store.load(); await Store.loadAtts(st.lid);
     applyMarks(); renderNotes(); refreshAtts(); renderToc();
-    $$('#reader textarea.ans').forEach(ta => { if (document.activeElement !== ta) { const a = Store.answers()[ta.dataset.for]; ta.value = a ? a.t : ''; } });
+    refreshAns();
   } catch (e) { console.error(e); }
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
@@ -1306,8 +1489,9 @@ async function importEdition(fromId, toId) {
         }
       }
     }
-    if (!target) { res.lost.push({ kind: '답', where: OL ? (lessonNo(OL) ? OL.no + '과' : OL.title) : '', quote: '', note: a.t, lid: olid, block: id }); continue; }
-    if (!(Store.answers()[target] || {}).t) { await Store.setAnswer(target, a.t); res.answers++; }
+    if (!target) { res.lost.push({ kind: '답', where: OL ? (lessonNo(OL) ? OL.no + '과' : OL.title) : '', quote: '', note: a.t || (a.ink ? '✍ 손글씨' : ''), lid: olid, block: id }); continue; }
+    const ex = Store.answers()[target] || {};
+    if (!ex.t && !ex.ink) { await Store.setAnswer(target, a.t || '', a.ink || ''); res.answers++; }
   }
   // 3) 읽음 표시 (같은 과·같은 단원 제목)
   Object.keys(Store.done()).filter(u => u[0] === fb.prefix).forEach(uid => {
@@ -1798,7 +1982,7 @@ async function enterApp(info) {
   gate('loading');
   await Store.load();
   B.watchUser(onLive);
-  setFs(Store.pref('fs', 17)); setPenColor(Store.pref('pen', 'y'));
+  setFs(Store.pref('fs', 17)); setPenColor(Store.pref('pen', 'y')); applyAFont();
   $('#acct-name').textContent = info.name + (info.role === 'admin' ? ' · 관리자' : info.role === 'teacher' ? ' · 강사' : '');
   $('#btn-admin').hidden = !(info.role === 'admin' && B.kind === 'firebase');
   $('#btn-people').hidden = info.role !== 'admin';
