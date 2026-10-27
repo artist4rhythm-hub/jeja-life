@@ -100,7 +100,7 @@ async function FirebaseBackend(config) {
     async loadUser() {
       const uid = u(); const out = { marks: [], answers: {}, done: {}, prefs: {} };
       const [m, a, dn, pf] = await Promise.all(['marks', 'answers', 'done'].map(c => F.getDocs(F.collection(db, 'users', uid, c))).concat([F.getDoc(d('users', uid, 'prefs', 'main'))]));
-      m.forEach(x => { const g = x.data(); (g.segs || []).forEach((s, i) => out.marks.push({ id: x.id + '-' + i, gid: x.id, lid: g.lid, block: s.block, s: s.s, e: s.e, quote: s.quote, c: g.c, note: i === 0 ? (g.note || '') : '', photos: i === 0 ? (g.photos || []) : [], at: g.at })); });
+      m.forEach(x => { const g = x.data(); (g.segs || []).forEach((s, i) => out.marks.push({ id: x.id + '-' + i, gid: x.id, lid: g.lid, block: s.block, ...(s.tl ? { tl: s.tl, k: s.k } : {}), s: s.s, e: s.e, quote: s.quote, c: g.c, note: i === 0 ? (g.note || '') : '', ...(i === 0 && g.nc ? { nc: g.nc } : {}), photos: i === 0 ? (g.photos || []) : [], at: g.at })); });
       a.forEach(x => { out.answers[x.id] = x.data(); });
       dn.forEach(x => { out.done[x.id] = x.data().at; });
       if (pf.exists()) out.prefs = pf.data();
@@ -116,7 +116,7 @@ async function FirebaseBackend(config) {
     watchUser(cb) {
       const uid = u(); const offs = [];
       offs.push(F.onSnapshot(F.collection(db, 'users', uid, 'marks'), snap => {
-        const marks = []; snap.forEach(x => { const g = x.data(); (g.segs || []).forEach((s, i) => marks.push({ id: x.id + '-' + i, gid: x.id, lid: g.lid, block: s.block, s: s.s, e: s.e, quote: s.quote, c: g.c, note: i === 0 ? (g.note || '') : '', photos: i === 0 ? (g.photos || []) : [], at: g.at })); });
+        const marks = []; snap.forEach(x => { const g = x.data(); (g.segs || []).forEach((s, i) => marks.push({ id: x.id + '-' + i, gid: x.id, lid: g.lid, block: s.block, ...(s.tl ? { tl: s.tl, k: s.k } : {}), s: s.s, e: s.e, quote: s.quote, c: g.c, note: i === 0 ? (g.note || '') : '', ...(i === 0 && g.nc ? { nc: g.nc } : {}), photos: i === 0 ? (g.photos || []) : [], at: g.at })); });
         cb({ marks });
       }, e => console.error('marks', e)));
       offs.push(F.onSnapshot(F.collection(db, 'users', uid, 'answers'), snap => { const answers = {}; snap.forEach(x => { answers[x.id] = x.data(); }); cb({ answers }); }, e => console.error('answers', e)));
@@ -221,7 +221,7 @@ function LocalBackend() {
     pageUrl: async p => `pages/p${p}.webp`,
     async loadUser() {
       const out = { marks: [], answers: { ...db.answers }, done: { ...db.done }, prefs: { ...db.prefs } };
-      Object.entries(db.marks).forEach(([gid, g]) => g.segs.forEach((s, i) => out.marks.push({ id: gid + '-' + i, gid, lid: g.lid, block: s.block, s: s.s, e: s.e, quote: s.quote, c: g.c, note: i === 0 ? (g.note || '') : '', photos: i === 0 ? (g.photos || []) : [], at: g.at })));
+      Object.entries(db.marks).forEach(([gid, g]) => g.segs.forEach((s, i) => out.marks.push({ id: gid + '-' + i, gid, lid: g.lid, block: s.block, ...(s.tl ? { tl: s.tl, k: s.k } : {}), s: s.s, e: s.e, quote: s.quote, c: g.c, note: i === 0 ? (g.note || '') : '', ...(i === 0 && g.nc ? { nc: g.nc } : {}), photos: i === 0 ? (g.photos || []) : [], at: g.at })));
       return out;
     },
     saveMark: (gid, g) => { db.marks[gid] = g; return save(); },

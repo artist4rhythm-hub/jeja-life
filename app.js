@@ -9,6 +9,12 @@ import { initTTS, device, say, stopSay, VLANG, AR_C, arCountry, setArCountry, ar
 let B = null;
 (() => {
 'use strict';
+/* 형광펜 색 코드: y1~y3(노랑 연·중·진) … v3, 밑줄 uy~uv. 예전 코드 y·g·p·b·u 도 그대로 읽음 */
+const HUES = [['y', '노랑'], ['o', '주황'], ['r', '빨강'], ['p', '분홍'], ['g', '초록'], ['b', '파랑'], ['v', '보라']];
+const LEGACY_C = { y: 'y2', g: 'g2', p: 'p2', b: 'b2', u: 'ur' };
+const normC = c => LEGACY_C[c] || c || 'y2';
+const isUl = c => /^u[a-z]$/.test(normC(c));
+const markCls = c => `c-${normC(c)}${isUl(c) ? ' ul' : ''}`;
 
 /* ---------------- 저장소 (화면용 메모리 + 백엔드 기록) ---------------- */
 const Store = (() => {
@@ -16,7 +22,7 @@ const Store = (() => {
   const fail = e => { console.error(e); toast('저장하지 못했습니다. 인터넷 연결을 확인해 주세요'); };
   const groupDoc = gid => {
     const segs = mem.marks.filter(m => m.gid === gid); if (!segs.length) return null; const f = segs[0];
-    return { lid: f.lid, c: f.c, note: f.note || '', photos: f.photos || [], at: f.at, segs: segs.map(x => ({ block: x.block, s: x.s, e: x.e, quote: x.quote })) };
+    return { lid: f.lid, c: f.c, note: f.note || '', ...(f.nc ? { nc: f.nc } : {}), photos: f.photos || [], at: f.at, segs: segs.map(x => ({ block: x.block, ...(x.tl ? { tl: x.tl, k: x.k } : {}), s: x.s, e: x.e, quote: x.quote })) };
   };
   let prefT;
   return {
@@ -24,6 +30,7 @@ const Store = (() => {
     marks: () => mem.marks,
     addMarks(list) { mem.marks.push(...list); B.saveMark(list[0].gid, groupDoc(list[0].gid)).catch(fail); },
     removeGroup(gid) { const f = mem.marks.find(m => m.gid === gid); (f && f.photos || []).forEach(id => B.deletePhoto(id).catch(() => {})); mem.marks = mem.marks.filter(m => m.gid !== gid); B.deleteMark(gid).catch(fail); },
+    setLook(gid, o) { mem.marks.forEach((m, i) => { if (m.gid === gid) { if (o.c) m.c = o.c; } }); const f = mem.marks.find(m => m.gid === gid); if (f && o.nc) f.nc = o.nc; return B.saveMark(gid, groupDoc(gid)).catch(fail); },
     setNote(gid, note, photos) { let first = true; mem.marks.forEach(m => { if (m.gid === gid) { m.note = first ? note : ''; if (first && photos) m.photos = photos; first = false; } }); return B.saveMark(gid, groupDoc(gid)).catch(fail); },
     answers: () => mem.answers,
     async setAnswer(id, t) {
@@ -347,6 +354,7 @@ function segmentsFromSelection() {
   return segs.length ? { segs, rect: R.getBoundingClientRect() } : null;
 }
 function showBar(rect, mode) {
+  if (mode === 'main') renderHlPal();
   $('.hl-main', bar).hidden = mode !== 'main'; $('.hl-memo', bar).hidden = mode !== 'memo'; $('.hl-edit', bar).hidden = mode !== 'edit';
   bar.hidden = false;
   const bw = bar.offsetWidth, bh = bar.offsetHeight, vw = document.documentElement.clientWidth;
@@ -408,13 +416,16 @@ if (IOS) {
   reader.addEventListener('pointerup', e => { if (drawing) drawEnd(); });
   reader.addEventListener('pointercancel', () => { drawing = null; });
 }
-function setPenColor(c) { penColor = c; $$('#pendock [data-pc]').forEach(b => b.classList.toggle('on', b.dataset.pc === c)); Store.setPref('pen', c); }
+function setPenColor(c) { penColor = normC(c); const [sh, ul] = palState(penColor); renderPal($('#pd-pal'), penColor, sh, ul); $('#pd-cur .sw').className = 'sw ' + markCls(penColor); Store.setPref('pen', penColor); }
+function penDock(open) { $('#pendock').classList.toggle('open', open); $('#pd-cur').setAttribute('aria-expanded', open ? 'true' : 'false'); }
+palInit($('#pd-pal'), () => penColor, c => { setPenColor(c); penDock(false); });
+$('#pd-cur').addEventListener('click', () => penDock(!$('#pendock').classList.contains('open')));
 function setFinger(on) {
   fingerDraw = on; $('#pd-finger').setAttribute('aria-pressed', on); document.body.classList.toggle('finger-draw', on);
   if (!IOS) reader.style.touchAction = on ? 'none' : '';
   toast(on ? '손가락으로 칠하기 켜짐 · 화면을 넘기려면 끄세요' : '손가락으로 칠하기 꺼짐');
 }
-$('#pendock').addEventListener('click', e => { const b = e.target.closest('[data-pc]'); if (b) setPenColor(b.dataset.pc); if (e.target.closest('#pd-finger')) setFinger(!fingerDraw); });
+$('#pendock').addEventListener('click', e => { if (e.target.closest('#pd-finger')) setFinger(!fingerDraw); });
 if (matchMedia('(any-pointer: coarse)').matches || IOS) $('#pendock').hidden = false;
 addEventListener('pointerdown', e => { if (e.pointerType === 'pen') $('#pendock').hidden = false; }, { passive: true });
 
@@ -424,24 +435,26 @@ function addMark(c, note) {
   getSelection().removeAllRanges(); hideBar(); applyMarks(); renderNotes();
   if (note) toast('메모를 저장했습니다');
 }
-$$('[data-c]', bar).forEach(b => b.addEventListener('click', () => addMark(b.dataset.c)));
+const lastC = () => Store.pref('lastC', 'y2');
+function renderHlPal() { const [sh, ul] = [Store.pref('palSh', 2), !!Store.pref('palUl', false)]; renderPal($('#hl-pal'), lastC(), sh, ul); }
+palInit($('#hl-pal'), lastC, c => { Store.setPref('lastC', c); addMark(c); }, (sh, ul) => { Store.setPref('palSh', sh); Store.setPref('palUl', ul); });
+bar.addEventListener('mousedown', e => { if (e.target.closest('button')) e.preventDefault(); });
 $('#hl-memo').addEventListener('click', () => { const r = bar.getBoundingClientRect(); $('#hl-memo-in').value = ''; showBar({ left: r.left, width: r.width, top: r.top + (lastPointer === 'mouse' ? r.height + 10 : -14), bottom: r.top - 14 }, 'memo'); $('#hl-memo-in').focus(); });
 function saveMemo() {
   const v = $('#hl-memo-in').value.trim();
   if (editGid) { Store.setNote(editGid, v); hideBar(); applyMarks(); renderNotes(); toast(v ? '메모를 고쳤습니다' : '메모를 비웠습니다'); return; }
-  if (!v) return; addMark('y', v);
+  if (!v) return; addMark(lastC(), v);
 }
 $('#hl-memo-ok').addEventListener('click', saveMemo);
 $('#hl-memo-in').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); saveMemo(); } if (e.key === 'Escape') hideBar(); });
 /* ---------------- 칠한 곳 메모: 한 번 누르면 보기, 두 번 누르면 바로 쓰기 ---------------- */
 const pop = $('#notepop');
 let popGid = null, lastTap = { gid: null, t: 0 }, tapT = null;
-const COLOR_NAME = { y: '노랑', g: '초록', p: '분홍', b: '파랑', u: '밑줄' };
 function openNote(gid, rect, edit) {
   const segs = Store.marks().filter(m => m.gid === gid); if (!segs.length) return;
   popGid = gid; hideBar();
   const quote = segs.map(x => x.quote).join(' … '), note = segs[0].note || '';
-  const q = $('.np-quote', pop); q.textContent = quote.length > 90 ? quote.slice(0, 90) + '…' : quote; q.className = 'np-quote c-' + segs[0].c; q.dir = 'auto';
+  const q = $('.np-quote', pop); q.textContent = quote.length > 90 ? quote.slice(0, 90) + '…' : quote; q.className = 'np-quote ' + markCls(segs[0].c); q.dir = 'auto';
   popPhotos = (segs[0].photos || []).map(id => ({ id, url: photoCache.get(id) || null })); removedPhotos = [];
   $('.np-text', pop).textContent = note || (popPhotos.length ? '' : '아직 메모가 없습니다. 두 번 누르거나 [메모 쓰기]를 누르세요.');
   $('.np-text', pop).classList.toggle('empty', !note);
@@ -462,7 +475,18 @@ function setPopMode(edit) {
   const has = !!(Store.marks().find(m => m.gid === popGid) || {}).note;
   $('#np-edit').textContent = has ? '메모 수정' : '메모 쓰기';
 }
-function closeNote() { pop.hidden = true; popGid = null; }
+function closeNote() { pop.hidden = true; popGid = null; $('#np-colors').hidden = true; $('#np-color').setAttribute('aria-pressed', 'false'); }
+function renderNpColors() {
+  const f = Store.marks().find(m => m.gid === popGid); if (!f) return;
+  $('#np-nc').innerHTML = NC.map(([k, n]) => `<button type="button" class="ncs nc-${k} ${(f.nc || 'y') === k ? 'on' : ''}" data-nc="${k}" aria-label="포스트잇 ${n}"></button>`).join('');
+  const [sh, ul] = palState(f.c); renderPal($('#np-pal'), f.c, sh, ul);
+}
+$('#np-color').addEventListener('click', () => { const box = $('#np-colors'); box.hidden = !box.hidden; $('#np-color').setAttribute('aria-pressed', box.hidden ? 'false' : 'true'); if (!box.hidden) renderNpColors(); });
+$('#np-nc').addEventListener('click', e => { const b = e.target.closest('[data-nc]'); if (!b || !popGid) return; e.stopPropagation(); Store.setLook(popGid, { nc: b.dataset.nc }); renderNpColors(); applyMarks(); });
+palInit($('#np-pal'), () => (Store.marks().find(m => m.gid === popGid) || {}).c, c => {
+  if (!popGid) return; Store.setLook(popGid, { c }); Store.setPref('lastC', c); renderNpColors(); applyMarks(); renderNotes();
+  $('.np-quote', pop).className = 'np-quote ' + markCls(c);
+});
 $('#np-edit').addEventListener('click', () => { setPopMode(true); $('#np-in').focus(); });
 /* 메모 사진 */
 let popPhotos = [], removedPhotos = [];
@@ -545,11 +569,97 @@ function wrapOffsets(tx, s, e, cls, gid, title) {
 function applyMarks() {
   const r = $('#reader'); unwrapAll(r);
   const notes = {}, photos = {}; Store.marks().forEach(m => { if (m.note) notes[m.gid] = m.note; if (m.photos && m.photos.length) photos[m.gid] = 1; });
+  const fix = new Set();
   Store.marks().filter(m => m.lid === st.lid).forEach(m => {
-    const tx = m.tl ? trUnitEl(m.block, m.tl, m.k) : $(`[data-id="${m.block}"] .tx`, r); if (!tx) return;   // 번역 표시는 그 번역이 화면에 있을 때만
-    wrapOffsets(tx, m.s, m.e, `hl c-${m.c}${notes[m.gid] ? ' has-note' : ''}`, m.gid, notes[m.gid]);
+    let tx = m.tl ? trUnitEl(m.block, m.tl, m.k) : $(`[data-id="${m.block}"] .tx`, r); if (!tx) return;   // 번역 표시는 그 번역이 화면에 있을 때만
+    // v0.17~0.20에서 번역에 칠한 표시가 저장 때 '번역'이라는 정보를 잃은 경우: 번역 문장에서 같은 글을 찾아 되살림
+    if (!m.tl && m.quote && !/[가-힣]/.test(m.quote) && koText(tx).slice(m.s, m.e) !== m.quote) {
+      const hit = $$(`[data-b="${m.block}"]`, r).find(u => u.textContent.includes(m.quote));
+      if (!hit) return;
+      const l = (hit.closest('[class*="tl-"]').className.match(/tl-(\w+)/) || [])[1]; if (!l) return;
+      const i = hit.textContent.indexOf(m.quote); Object.assign(m, { tl: l, k: +hit.dataset.k, s: i, e: i + m.quote.length }); tx = hit; fix.add(m.gid);
+    }
+    wrapOffsets(tx, m.s, m.e, `hl ${markCls(m.c)}${notes[m.gid] ? ' has-note' : ''}`, m.gid, notes[m.gid]);
   });
+  fix.forEach(g => Store.setLook(g, {}));
   new Set([...Object.keys(notes), ...Object.keys(photos)]).forEach(g => { const ms = $$(`mark.hl[data-gid="${g}"]`, r); if (ms.length) { const last = ms[ms.length - 1]; last.classList.add('note-end'); if (photos[g]) last.classList.add('has-photo'); } });
+  renderStickies();
+}
+
+/* ---------------- 포스트잇: 메모를 본문 옆(넓은 화면) 또는 문단 아래(폰)에 붙여 보여 줌 ---------------- */
+const NC = [['y', '노랑'], ['p', '분홍'], ['b', '하늘'], ['g', '연두'], ['o', '주황'], ['v', '보라']];
+const stickyMode = () => Store.pref('sticky', 'auto');   // auto(넓으면 옆, 좁으면 문단 아래) · below · off
+let stickyRO = null;
+function stickyEl(f) {
+  const el = document.createElement('div'); const ph = (f.photos || []).length;
+  el.className = `sticky nc-${f.nc || 'y'}`; el.dataset.gid = f.gid; el.tabIndex = 0; el.setAttribute('role', 'button');
+  el.innerHTML = `<div class="st-t">${esc(f.note || '')}</div>${ph ? `<span class="st-ph">📷 ${ph}</span>` : ''}`;
+  el.setAttribute('aria-label', '메모: ' + (f.note || '사진'));
+  return el;
+}
+function renderStickies() {
+  const r = $('#reader'); if (!r) return;
+  $$('.sticky-layer, .sticky-row', r).forEach(x => x.remove()); r.classList.remove('sticky-side');
+  const mode = stickyMode(); if (mode === 'off' || !cur()) return;
+  const groups = {}; Store.marks().filter(m => m.lid === st.lid).forEach(m => (groups[m.gid] = groups[m.gid] || []).push(m));
+  const list = Object.values(groups).map(g => { const f = g[0]; const ms = $$(`mark.hl[data-gid="${f.gid}"]`, r);
+    return (f.note || (f.photos || []).length) && ms.length ? { f, last: ms[ms.length - 1] } : null; }).filter(Boolean);
+  if (!list.length) return;
+  const wrap = $('.page-wrap', r); if (!wrap) return;
+  const side = mode === 'auto' && !isMob() && r.clientWidth >= 860 && !r.classList.contains('tr-side');
+  if (side) {
+    r.classList.add('sticky-side');
+    const layer = document.createElement('div'); layer.className = 'sticky-layer'; layer.setAttribute('aria-label', '메모 포스트잇');
+    list.forEach(x => layer.append(stickyEl(x.f))); wrap.append(layer);
+    layoutStickies();
+    if (!stickyRO && 'ResizeObserver' in window) stickyRO = new ResizeObserver(() => requestAnimationFrame(layoutStickies));
+    if (stickyRO) { stickyRO.disconnect(); stickyRO.observe(wrap); }
+    return;
+  }
+  // 문단 아래: 칠한 곳이 끝나는 문단(번역이 있으면 번역 아래) 바로 다음에 붙임
+  const rows = new Map();
+  list.forEach(x => {
+    let a = x.last.closest('.trb') || x.last.closest('.blk'); if (!a) return;
+    if (a.closest('.trrow')) a = a.closest('.trrow');
+    else if (a.classList.contains('blk') && a.nextElementSibling && a.nextElementSibling.classList.contains('trb')) a = a.nextElementSibling;
+    if (!rows.has(a)) rows.set(a, []); rows.get(a).push(x.f);
+  });
+  rows.forEach((fs, a) => { const row = document.createElement('div'); row.className = 'sticky-row'; fs.forEach(f => row.append(stickyEl(f))); a.after(row); });
+}
+function layoutStickies() {
+  const r = $('#reader'); if (!r || !r.classList.contains('sticky-side')) return;
+  const wrap = $('.page-wrap', r), layer = wrap && $('.sticky-layer', wrap); if (!layer) return;
+  const base = wrap.getBoundingClientRect().top;
+  const items = $$('.sticky', layer).map(el => { const m = $(`mark.hl[data-gid="${el.dataset.gid}"]`, r); return { el, top: m ? m.getBoundingClientRect().top - base : 0 }; }).sort((a, b) => a.top - b.top);
+  let y = 0; items.forEach(it => { const t = Math.max(it.top - 6, y); it.el.style.top = t + 'px'; y = t + it.el.offsetHeight + 10; });
+}
+let stickyT; addEventListener('resize', () => { clearTimeout(stickyT); stickyT = setTimeout(renderStickies, 250); });
+/* 포스트잇 ↔ 칠한 곳: 누르면 메모 열기, 올려 두면 서로 표시 */
+$('#reader').addEventListener('click', e => {
+  const sk = e.target.closest('.sticky'); if (!sk) return;
+  openNote(sk.dataset.gid, sk.getBoundingClientRect(), false);
+});
+$('#reader').addEventListener('keydown', e => { const sk = e.target.closest && e.target.closest('.sticky'); if (sk && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openNote(sk.dataset.gid, sk.getBoundingClientRect(), false); } });
+function hotGid(g, on) { $$(`#reader [data-gid="${g}"]`).forEach(x => x.classList.toggle('hot', on)); }
+$('#reader').addEventListener('mouseover', e => { const t = e.target.closest('.sticky, mark.hl'); if (t) hotGid(t.dataset.gid, true); });
+$('#reader').addEventListener('mouseout', e => { const t = e.target.closest('.sticky, mark.hl'); if (t) hotGid(t.dataset.gid, false); });
+
+/* ---------------- 색 팔레트: 7가지 색 × 연·중·진 + 같은 7색 밑줄 ---------------- */
+function renderPal(el, cur, sh, ul) {
+  const n = normC(cur); el.dataset.sh = sh; el.dataset.ul = ul ? '1' : '';
+  el.innerHTML = `<span class="pal-sh" role="group" aria-label="진하기">${[1, 2, 3].map(i => `<button type="button" data-sh="${i}" class="${!ul && sh === i ? 'on' : ''}" aria-label="${['연하게', '보통', '진하게'][i - 1]}">${['연', '중', '진'][i - 1]}</button>`).join('')}<button type="button" data-ul="1" class="pal-u ${ul ? 'on' : ''}" aria-label="밑줄">밑줄</button></span><span class="pal-hue">${HUES.map(([h, nm]) => { const code = ul ? 'u' + h : h + sh;
+    return `<button type="button" class="sw ${markCls(code)} ${code === n ? 'on' : ''}" data-pick="${code}" aria-label="${nm}${ul ? ' 밑줄' : ''}"></button>`; }).join('')}</span>`;
+}
+function palState(c) { const n = normC(c); return isUl(n) ? [Store.pref('palSh', 2), true] : [+n[1] || 2, false]; }
+function palInit(el, getCur, onPick, persist) {
+  el.addEventListener('mousedown', e => { if (e.target.closest('button')) e.preventDefault(); });   // 고른 글자가 풀리지 않게
+  el.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return; e.stopPropagation();
+    const sh = +el.dataset.sh || 2, ul = !!el.dataset.ul;
+    if (b.dataset.sh) { renderPal(el, getCur(), +b.dataset.sh, false); if (persist) persist(+b.dataset.sh, false); return; }
+    if (b.dataset.ul) { renderPal(el, getCur(), sh, !ul); if (persist) persist(sh, !ul); return; }
+    if (b.dataset.pick) onPick(b.dataset.pick);
+  });
 }
 
 /* ---------------- 내 노트 ---------------- */
@@ -561,15 +671,17 @@ function renderNotes() {
   const order = st.index.lessons.map(l => l.id).filter(id => byL[id]);
   const n = $('#notes');
   if (!order.length) { n.innerHTML = `<p class="empty">아직 표시한 곳이 없습니다.<br>본문 글자를 드래그해서 선택하면 형광펜·밑줄·메모 도구가 나타납니다.</p>`; return; }
-  n.innerHTML = `<div class="nlist">${order.map(lid => {
+  const sm = stickyMode();
+  n.innerHTML = `<div class="st-mode"><span>메모 포스트잇</span><div class="seg">${[['auto', '자동'], ['below', '문단 아래'], ['off', '숨기기']].map(([k, t]) => `<button type="button" data-sticky="${k}" class="${sm === k ? 'on' : ''}">${t}</button>`).join('')}</div></div><div class="nlist">${order.map(lid => {
     const L = st.index.lessons.find(l => l.id === lid);
     const list = byL[lid].sort((a, b) => a.block < b.block ? -1 : a.block > b.block ? 1 : a.at - b.at);
     return `<div class="ngroup">${lessonNo(L) ? L.no + '과 ' : ''}${esc(L.title)} · ${list.length}</div>` + list.map(i => i.kind === 'ans'
       ? `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}"><span class="kind">내 답</span><br>${esc(i.note.slice(0, 120))}</button>`
-      : `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}">${i.tl && TRL[i.tl] ? `<span class="kind tlk tl-${i.tl}">${TRL[i.tl].tag}</span> ` : ''}<q class="c-${i.c}" dir="auto">${esc(i.quote.length > 70 ? i.quote.slice(0, 70) + '…' : i.quote)}</q>${i.note ? esc(i.note) : ''}${i.ph ? ` <span class="kind">📷 ${i.ph}</span>` : ''}</button>`).join('');
+      : `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}">${i.tl && TRL[i.tl] ? `<span class="kind tlk tl-${i.tl}">${TRL[i.tl].tag}</span> ` : ''}<q class="${markCls(i.c)}" dir="auto">${esc(i.quote.length > 70 ? i.quote.slice(0, 70) + '…' : i.quote)}</q>${i.note ? esc(i.note) : ''}${i.ph ? ` <span class="kind">📷 ${i.ph}</span>` : ''}</button>`).join('');
   }).join('')}</div>`;
 }
-$('#notes').addEventListener('click', e => { const b = e.target.closest('[data-jump]'); if (!b) return; closeSheets(); openLesson(b.dataset.lid, 0, b.dataset.jump); });
+$('#notes').addEventListener('click', e => {
+  const sm = e.target.closest('[data-sticky]'); if (sm) { Store.setPref('sticky', sm.dataset.sticky); renderNotes(); renderStickies(); toast({ auto: '넓은 화면에서는 본문 옆, 폰에서는 문단 아래에 붙입니다', below: '메모를 문단 아래에 붙입니다', off: '포스트잇을 숨겼습니다 (칠한 곳의 ✎로 볼 수 있어요)' }[sm.dataset.sticky]); return; } const b = e.target.closest('[data-jump]'); if (!b) return; closeSheets(); openLesson(b.dataset.lid, 0, b.dataset.jump); });
 
 /* ---------------- 자료(첨부) ---------------- */
 function renderFiles() {
@@ -1176,7 +1288,7 @@ async function importEdition(fromId, toId) {
     const gid = uidGen('g'); const at = Date.now();
     const photos = [];
     for (const pid of (first.photos || [])) { try { const img = await B.getPhoto(pid); if (img) { const np = uidGen('ph'); await B.putPhoto(np, { gid, img, at }); photos.push(np); } } catch (e) { console.warn(e); } }
-    Store.addMarks(out.map((o, i) => ({ id: gid + '-' + i, gid, lid: nlid, block: o.block, s: o.s, e: o.e, quote: segs[i].quote, c: first.c, note: i === 0 ? (first.note || '') : '', photos: i === 0 ? photos : [], at: first.at || at })));
+    Store.addMarks(out.map((o, i) => ({ id: gid + '-' + i, gid, lid: nlid, block: o.block, s: o.s, e: o.e, quote: segs[i].quote, c: first.c, note: i === 0 ? (first.note || '') : '', ...(i === 0 && first.nc ? { nc: first.nc } : {}), photos: i === 0 ? photos : [], at: first.at || at })));
     res.marks++;
   }
   // 2) 답

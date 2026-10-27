@@ -134,11 +134,8 @@
 
 <div id="pendock" class="pendock" role="toolbar" aria-label="펜 색" hidden>
   <span class="pd-label">펜</span>
-  <button type="button" class="sw y" data-pc="y" aria-label="노랑"></button>
-  <button type="button" class="sw g" data-pc="g" aria-label="초록"></button>
-  <button type="button" class="sw p" data-pc="p" aria-label="분홍"></button>
-  <button type="button" class="sw b" data-pc="b" aria-label="파랑"></button>
-  <button type="button" class="sw u" data-pc="u" aria-label="빨간 밑줄">U</button>
+  <button type="button" id="pd-cur" class="pd-cur" aria-label="펜 색 고르기" aria-expanded="false"><span class="sw"></span></button>
+  <span class="pal" id="pd-pal"></span>
   <button type="button" id="pd-finger" aria-pressed="false">손가락</button>
 </div>
 
@@ -147,10 +144,15 @@
   <p class="np-text"></p>
   <textarea id="np-in" rows="4" placeholder="메모를 적어 주세요" hidden></textarea>
   <div class="np-photos" id="np-photos" hidden></div>
+  <div class="np-colors" id="np-colors" hidden>
+    <div class="np-crow"><small>포스트잇</small><span class="np-nc" id="np-nc"></span></div>
+    <div class="np-crow"><small>형광펜</small><span class="pal" id="np-pal"></span></div>
+  </div>
   <input type="file" id="np-file" accept="image/*" hidden>
   <div class="np-act">
     <button type="button" id="np-del" class="np-del">표시 지우기</button>
     <button type="button" id="np-addphoto" class="ghost np-addphoto" hidden>📷 사진</button>
+    <button type="button" id="np-color" class="ghost np-addphoto" aria-pressed="false">🎨 색</button>
     <span class="grow"></span>
     <button type="button" id="np-close" class="ghost">닫기</button>
     <button type="button" id="np-edit" class="primary">메모 쓰기</button>
@@ -160,12 +162,8 @@
 
 <div id="hlbar" role="toolbar" aria-label="형광펜 도구" hidden>
   <span class="hl-main">
-    <button type="button" class="sw y" data-c="y" aria-label="노랑 형광펜"></button>
-    <button type="button" class="sw g" data-c="g" aria-label="초록 형광펜"></button>
-    <button type="button" class="sw p" data-c="p" aria-label="분홍 형광펜"></button>
-    <button type="button" class="sw b" data-c="b" aria-label="파랑 형광펜"></button>
+    <span class="pal" id="hl-pal"></span>
     <span class="sep"></span>
-    <button type="button" class="u" data-c="u">밑줄</button>
     <button type="button" id="hl-memo">메모</button>
   </span>
   <span class="hl-memo" hidden>
