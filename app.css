@@ -945,3 +945,55 @@ body[data-afont="base"]{--afont:var(--sans);--afs:.92em;--alh:2.1em}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .ink{background:#f3eedf;border-color:#6b6040}}
 :root[data-theme="dark"] .ink{background:#f3eedf;border-color:#6b6040}
 @media (max-width:520px){.ink-tools{gap:2px;padding:5px}.ink-tools button{padding:2px 6px}.ink-tools .ink-c{width:24px;height:24px;min-height:24px}}
+
+/* ===== v0.23 양쪽 정렬 ===== */
+.bk p.blk:not(.right):not(.cite),.bk .trb .tl,.hero .hero-sub,.hero .epi,.hero .hero-note{text-align:justify;text-justify:inter-character}
+.bk .trb .tl-en{hyphens:auto;-webkit-hyphens:auto}
+.bk .trb .tl-ar{text-align:justify;text-align-last:right}
+body.al-left .bk p.blk:not(.right):not(.cite),body.al-left .bk .trb .tl,body.al-left .hero .hero-sub,body.al-left .hero .epi,body.al-left .hero .hero-note{text-align:start}
+body.al-left .bk .trb .tl-ar{text-align:right}
+#fs-al[aria-pressed="false"] svg path{d:path("M4 6h16M4 10h12M4 14h16M4 18h10")}
+
+/* ===== v0.23 손글씨 도구: 펜·형광펜·지우개 ===== */
+.ink-tools .ink-tool{font-size:14px;padding:2px 7px}
+.ink-tools .ink-tool[data-ink-tool="erase"]{font-size:12px}
+.ink-tools .ink-w i{background:currentColor}
+
+/* ===== v0.23 오른쪽 여백 필기 ===== */
+#reader.mink .page-wrap{max-width:none;position:relative;padding-right:calc(46% + 22px)}
+.mink-layer{position:absolute;top:0;bottom:0;right:0;width:46%;border-left:1px dashed #d8cda8;
+  background-color:#fffcf3;background-image:radial-gradient(#e6dcbf 1.1px,transparent 1.3px);background-size:26px 26px;background-position:13px 13px}
+.mink-view{position:sticky;top:0;height:100vh}
+.mink-view canvas{display:block;width:100%;height:100%;touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;cursor:crosshair}
+.mink-layer.finger .mink-view canvas{touch-action:none}
+.mink-layer.erasing .mink-view canvas{cursor:cell}
+.mink-tools.ink-tools{display:flex;position:absolute;top:8px;left:8px;right:8px;border:1px solid #e2d9bd;border-radius:12px;box-shadow:0 4px 14px rgba(60,50,20,.12);background:rgba(251,246,230,.96)}
+.mink-tools .mk-finger.on{background:#1f5a3d;color:#fff}
+.mink-hint{position:absolute;left:0;right:0;top:46%;margin:0;text-align:center;color:#b3a77f;font-family:var(--sans);font-size:15px;line-height:1.7;pointer-events:none}
+.mink-hint small{font-size:12px}
+.mink-layer:not(.empty) .mink-hint{display:none}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .mink-layer{background-color:#f3eedf;border-left-color:#6b6040}}
+:root[data-theme="dark"] .mink-layer{background-color:#f3eedf;border-left-color:#6b6040}
+/* 필기 중에는 오른쪽 노트 패널을 접어 본문+필기 공간을 넓게 (버튼으로 열기) */
+@media (min-width:1200px){
+  body.mink-on .shell{grid-template-columns:260px minmax(0,1fr)}
+  body.mink-on .only-mid{display:inline-flex!important}
+  body.mink-on #panel{position:fixed;right:0;top:calc(var(--top-h) + env(safe-area-inset-top,0px));bottom:0;width:360px;max-width:92vw;z-index:25;box-shadow:var(--shadow);transform:translateX(105%);transition:transform .2s}
+  body.mink-on.orig-on #panel{width:min(640px,60vw)}
+  body.mink-on.show-panel #panel{transform:none}
+}
+#btn-mink[aria-pressed="true"]{background:var(--on-brand);color:var(--brand)}
+/* v0.23 상단 바: 아이패드 가로·작은 노트북에서 버튼이 제목을 가리지 않게 (아이콘만, 제목은 줄여서) */
+@media (min-width:760px) and (max-width:1439px){
+  .top{grid-template-columns:minmax(84px,auto) minmax(0,1fr) auto}
+  .top .brand{min-width:0;overflow:hidden}
+  .top .brand b,.top .brand .brand-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .top #btn-lib .lbl,.top #btn-tr .lbl,.top #btn-tts .lbl,.top #btn-mink .lbl{display:none}
+  .top #btn-lib,.top #btn-tr,.top #btn-tts,.top #btn-mink{padding:0 10px}
+  .top-actions{gap:5px}
+}
+/* 필기 중에는 형광펜 펜 도구를 본문 쪽(왼쪽 아래)으로 옮겨 필기 공간을 가리지 않게 */
+body.mink-on .pendock{right:auto;left:calc(260px + 16px)}
+@media (max-width:1199px){body.mink-on .pendock{left:calc(240px + 16px)}}
+/* 책처럼: 한글을 글자 단위로 줄바꿈해 양쪽 정렬 간격이 고르게 */
+body.al-book .bk p.blk:not(.right):not(.cite),body.al-book .bk .trb .tl-ja,body.al-book .hero .hero-sub,body.al-book .hero .epi,body.al-book .hero .hero-note{word-break:normal;line-break:strict}

@@ -18,7 +18,8 @@ const markCls = c => `c-${normC(c)}${isUl(c) ? ' ul' : ''}`;
 
 /* ---------------- 저장소 (화면용 메모리 + 백엔드 기록) ---------------- */
 const Store = (() => {
-  const mem = { marks: [], answers: {}, done: {}, atts: {}, prefs: {} };
+  const mem = { marks: [], answers: {}, minks: {}, done: {}, atts: {}, prefs: {} };
+  const splitA = a => { const ans = {}, mk = {}; Object.entries(a || {}).forEach(([k, v]) => { if (k.startsWith('ink_')) mk[k.slice(4)] = v; else ans[k] = v; }); return [ans, mk]; };
   const fail = e => { console.error(e); toast('저장하지 못했습니다. 인터넷 연결을 확인해 주세요'); };
   const groupDoc = gid => {
     const segs = mem.marks.filter(m => m.gid === gid); if (!segs.length) return null; const f = segs[0];
@@ -26,7 +27,7 @@ const Store = (() => {
   };
   let prefT;
   return {
-    async load() { const u = await B.loadUser(); Object.assign(mem, { marks: u.marks, answers: u.answers, done: u.done, prefs: u.prefs || {} }); },
+    async load() { const u = await B.loadUser(); const [ans, mk] = splitA(u.answers); Object.assign(mem, { marks: u.marks, answers: ans, minks: mk, done: u.done, prefs: u.prefs || {} }); },
     marks: () => mem.marks,
     addMarks(list) { mem.marks.push(...list); B.saveMark(list[0].gid, groupDoc(list[0].gid)).catch(fail); },
     removeGroup(gid) { const f = mem.marks.find(m => m.gid === gid); (f && f.photos || []).forEach(id => B.deletePhoto(id).catch(() => {})); mem.marks = mem.marks.filter(m => m.gid !== gid); B.deleteMark(gid).catch(fail); },
@@ -45,7 +46,13 @@ const Store = (() => {
     setDone(uid, v) { if (v) mem.done[uid] = Date.now(); else delete mem.done[uid]; B.setDone(uid, v).catch(fail); },
     atts: () => Object.values(mem.atts).flat(),
     hasAtts: lid => lid in mem.atts,
-    setRemote(part) { Object.assign(mem, part); },
+    setRemote(part) { if (part.answers) { const [a, m] = splitA(part.answers); part = { ...part, answers: a, minks: m }; } Object.assign(mem, part); },
+    /* 오른쪽 여백 필기: 단원마다 answers/ink_{단원} 문서 하나 (보안 규칙 변경 없이 '내 답' 자리에 함께 저장) */
+    minks: () => mem.minks,
+    async setMink(uid, json) {
+      if (json) mem.minks[uid] = { ink: json, at: Date.now() }; else delete mem.minks[uid];
+      try { await B.setAnswer('ink_' + uid, json ? mem.minks[uid] : null); return true; } catch (e) { console.error(e); return false; }
+    },
     setRemoteAtts(lid, list) { mem.atts[lid] = list; },
     async loadAtts(lid) { try { mem.atts[lid] = await B.listAtts(lid); } catch (e) { console.error(e); mem.atts[lid] = []; } },
     async addAtt(a) { await B.addAtt(a); (mem.atts[a.lid] = mem.atts[a.lid] || []).push(a); },
@@ -321,7 +328,7 @@ function ansBoxHTML(id, rows, ph) {
   return `<div class="ans-box" data-box="${id}"><textarea class="ans" data-for="${id}" rows="${rows}" aria-label="답 쓰기"${ph ? ` placeholder="${ph}"` : ''}>${esc(a.t || '')}</textarea>
 <div class="ans-bar"><span class="saved" aria-live="polite"></span><button type="button" class="ans-b" data-afont-open aria-label="답 글씨체 바꾸기"><span class="ans-font">가</span> 글씨체</button><button type="button" class="ans-b" data-ink-open="${id}" aria-pressed="${a.ink ? 'true' : 'false'}">✍ 손글씨</button></div>
 <div class="ink" data-ink="${id}" ${a.ink ? '' : 'hidden'}>
-<div class="ink-tools" role="toolbar" aria-label="손글씨 도구">${INK_COLORS.map(([c, n]) => `<button type="button" class="ink-c" data-ink-c="${c}" style="--c:${c}" aria-label="${n}"></button>`).join('')}<span class="ink-sep"></span>${INK_SIZES.map(([w, n]) => `<button type="button" class="ink-w" data-ink-w="${w}" aria-label="${n}"><i style="--w:${Math.round(w * 1.6)}px"></i></button>`).join('')}<span class="ink-sep"></span><button type="button" data-ink-t="erase" aria-label="지우개">지우개</button><button type="button" data-ink-t="undo" aria-label="되돌리기">↶</button><button type="button" data-ink-t="clear">모두 지우기</button><button type="button" data-ink-t="more">＋ 칸</button><span class="grow"></span><button type="button" class="primary" data-ink-t="done">완료</button></div>
+<div class="ink-tools" role="toolbar" aria-label="손글씨 도구">${inkToolsHTML('pad')}</div>
 <canvas aria-label="손글씨 쓰는 곳"></canvas><button type="button" class="ink-start" data-ink-t="start">✍ 눌러서 쓰기</button></div></div>`;
 }
 function setSaved(id, ok) { const s = $(`.ans-box[data-box="${id}"] .saved`); if (s) { s.textContent = ok ? '저장됨' : '저장하지 못했습니다 (인터넷 확인)'; s.classList.toggle('bad', !ok); } }
@@ -349,33 +356,1135 @@ function openAFont(btn) {
 afPop.addEventListener('click', e => { const b = e.target.closest('[data-afont]'); if (!b) return; Store.setPref('ansFont', b.dataset.afont); applyAFont(); afPop.hidden = true; renderNotes(); toast('답 칸 글씨체: ' + AFONTS.find(x => x[0] === b.dataset.afont)[1]); });
 document.addEventListener('pointerdown', e => { if (!afPop.hidden && !e.target.closest('.afont-pop, [data-afont-open]')) afPop.hidden = true; }, true);
 
-/* 손글씨: 폭 1000 기준 좌표로 저장 → 폰·아이패드·노트북 어디서나 같은 모양으로 보임 */
+/* ================= 손글씨 공통 엔진 =================
+ * 펜을 누르는 힘(필압)·속도에 따라 획 굵기가 자연스럽게 변하도록, 점들을 매끈한 윤곽선으로 바꿔 채워 그립니다.
+ * (perfect-freehand 알고리즘 — 아이패드 메모·tldraw·Excalidraw에서 쓰는 방식) */
+/* perfect-freehand 1.2.x — MIT License  Copyright (c) 2021 Stephen Ruiz Ltd — MIT License, https://github.com/steveruizok/perfect-freehand */
+const getStroke = (() => {
+/* constants */
+/**
+ * Constants used throughout the stroke generation algorithm.
+ * @internal
+ */
+
+const { PI } = Math
+
+/**
+ * Rate of change for simulated pressure.
+ * Controls how quickly pressure changes based on drawing velocity.
+ * Higher values make pressure more responsive to speed changes.
+ */
+const RATE_OF_PRESSURE_CHANGE = 0.275
+
+/**
+ * PI with a tiny offset to fix browser rendering artifacts.
+ * Some browsers render strokes incorrectly when using exact PI.
+ */
+const FIXED_PI = PI + 0.0001
+
+/**
+ * Number of segments for rounded start caps.
+ */
+const START_CAP_SEGMENTS = 13
+
+/**
+ * Number of segments for rounded end caps.
+ * Higher than start caps for smoother appearance at stroke endings.
+ */
+const END_CAP_SEGMENTS = 29
+
+/**
+ * Number of segments for sharp corner caps.
+ */
+const CORNER_CAP_SEGMENTS = 13
+
+/**
+ * Pixels to skip at the end of a stroke to reduce noise.
+ */
+const END_NOISE_THRESHOLD = 3
+
+/**
+ * Minimum interpolation factor for streamline.
+ * Used when streamline is at maximum (1.0).
+ */
+const MIN_STREAMLINE_T = 0.15
+
+/**
+ * Range for interpolation factor calculation.
+ * Added to MIN_STREAMLINE_T based on (1 - streamline).
+ */
+const STREAMLINE_T_RANGE = 0.85
+
+/**
+ * Minimum stroke radius to prevent invisible strokes.
+ */
+const MIN_RADIUS = 0.01
+
+/**
+ * Default pressure for the first point of a stroke.
+ * Lower than subsequent points to prevent fat starts,
+ * since drawn lines almost always start slow.
+ */
+const DEFAULT_FIRST_PRESSURE = 0.25
+
+/**
+ * Default pressure for subsequent points when no pressure is provided.
+ */
+const DEFAULT_PRESSURE = 0.5
+
+/**
+ * Unit offset vector used as placeholder for initial vector
+ * and for creating a second point when only one point is provided.
+ */
+const UNIT_OFFSET                   = [1, 1]
+
+/* vec */
+
+/**
+ * Negate a vector.
+ * @param A
+ * @internal
+ */
+function neg(A      )       {
+  return [-A[0], -A[1]]
+}
+
+/**
+ * Add vectors.
+ * @param A
+ * @param B
+ * @internal
+ */
+function add(A      , B      )       {
+  return [A[0] + B[0], A[1] + B[1]]
+}
+
+/**
+ * Add vectors into an existing output vector (allocation-free).
+ * @param out Output vector to mutate
+ * @param A
+ * @param B
+ * @internal
+ */
+function addInto(out      , A      , B      )       {
+  out[0] = A[0] + B[0]
+  out[1] = A[1] + B[1]
+  return out
+}
+
+/**
+ * Subtract vectors.
+ * @param A
+ * @param B
+ * @internal
+ */
+function sub(A      , B      )       {
+  return [A[0] - B[0], A[1] - B[1]]
+}
+
+/**
+ * Subtract vectors into an existing output vector (allocation-free).
+ * @param out Output vector to mutate
+ * @param A
+ * @param B
+ * @internal
+ */
+function subInto(out      , A      , B      )       {
+  out[0] = A[0] - B[0]
+  out[1] = A[1] - B[1]
+  return out
+}
+
+/**
+ * Vector multiplication by scalar
+ * @param A
+ * @param n
+ * @internal
+ */
+function mul(A      , n        )       {
+  return [A[0] * n, A[1] * n]
+}
+
+/**
+ * Vector multiplication by scalar into an existing output vector (allocation-free).
+ * @param out Output vector to mutate
+ * @param A
+ * @param n
+ * @internal
+ */
+function mulInto(out      , A      , n        )       {
+  out[0] = A[0] * n
+  out[1] = A[1] * n
+  return out
+}
+
+/**
+ * Vector division by scalar.
+ * @param A
+ * @param n
+ * @internal
+ */
+function div(A      , n        )       {
+  return [A[0] / n, A[1] / n]
+}
+
+/**
+ * Perpendicular rotation of a vector A
+ * @param A
+ * @internal
+ */
+function per(A      )       {
+  return [A[1], -A[0]]
+}
+
+/**
+ * Perpendicular rotation into an existing output vector (allocation-free).
+ * @param out Output vector to mutate
+ * @param A
+ * @internal
+ */
+function perInto(out      , A      )       {
+  const temp = A[0]
+  out[0] = A[1]
+  out[1] = -temp
+  return out
+}
+
+/**
+ * Dot product
+ * @param A
+ * @param B
+ * @internal
+ */
+function dpr(A      , B      )         {
+  return A[0] * B[0] + A[1] * B[1]
+}
+
+/**
+ * Get whether two vectors are equal.
+ * @param A
+ * @param B
+ * @internal
+ */
+function isEqual(A      , B      )          {
+  return A[0] === B[0] && A[1] === B[1]
+}
+
+/**
+ * Length of the vector
+ * @param A
+ * @internal
+ */
+function len(A      )         {
+  return Math.hypot(A[0], A[1])
+}
+
+/**
+ * Length of the vector squared
+ * @param A
+ * @internal
+ */
+function len2(A      )         {
+  return A[0] * A[0] + A[1] * A[1]
+}
+
+/**
+ * Dist length from A to B squared (inlined for performance).
+ * @param A
+ * @param B
+ * @internal
+ */
+function dist2(A      , B      )         {
+  const dx = A[0] - B[0]
+  const dy = A[1] - B[1]
+  return dx * dx + dy * dy
+}
+
+/**
+ * Get normalized / unit vector.
+ * @param A
+ * @internal
+ */
+function uni(A      )       {
+  return div(A, len(A))
+}
+
+/**
+ * Dist length from A to B
+ * @param A
+ * @param B
+ * @internal
+ */
+function dist(A      , B      )         {
+  return Math.hypot(A[1] - B[1], A[0] - B[0])
+}
+
+/**
+ * Mean between two vectors or mid vector between two vectors
+ * @param A
+ * @param B
+ * @internal
+ */
+function med(A      , B      )       {
+  return mul(add(A, B), 0.5)
+}
+
+/**
+ * Rotate a vector around another vector by r (radians)
+ * @param A vector
+ * @param C center
+ * @param r rotation in radians
+ * @internal
+ */
+function rotAround(A      , C      , r        )       {
+  const s = Math.sin(r)
+  const c = Math.cos(r)
+
+  const px = A[0] - C[0]
+  const py = A[1] - C[1]
+
+  const nx = px * c - py * s
+  const ny = px * s + py * c
+
+  return [nx + C[0], ny + C[1]]
+}
+
+/**
+ * Rotate a vector around another vector by r (radians) into an existing output vector (allocation-free).
+ * @param out Output vector to mutate
+ * @param A vector
+ * @param C center
+ * @param r rotation in radians
+ * @internal
+ */
+function rotAroundInto(out      , A      , C      , r        )       {
+  const s = Math.sin(r)
+  const c = Math.cos(r)
+
+  const px = A[0] - C[0]
+  const py = A[1] - C[1]
+
+  const nx = px * c - py * s
+  const ny = px * s + py * c
+
+  out[0] = nx + C[0]
+  out[1] = ny + C[1]
+  return out
+}
+
+/**
+ * Interpolate vector A to B with a scalar t
+ * @param A
+ * @param B
+ * @param t scalar
+ * @internal
+ */
+function lrp(A      , B      , t        )       {
+  return add(A, mul(sub(B, A), t))
+}
+
+/**
+ * Interpolate vector A to B with a scalar t into an existing output vector (allocation-free).
+ * @param out Output vector to mutate
+ * @param A
+ * @param B
+ * @param t scalar
+ * @internal
+ */
+function lrpInto(out      , A      , B      , t        )       {
+  const dx = B[0] - A[0]
+  const dy = B[1] - A[1]
+  out[0] = A[0] + dx * t
+  out[1] = A[1] + dy * t
+  return out
+}
+
+/**
+ * Project a point A in the direction B by a scalar c
+ * @param A
+ * @param B
+ * @param c
+ * @internal
+ */
+function prj(A      , B      , c        )       {
+  return add(A, mul(B, c))
+}
+
+/**
+ * Project a point A in the direction B by a scalar c into an existing output vector (allocation-free).
+ * @param out Output vector to mutate
+ * @param A
+ * @param B
+ * @param c
+ * @internal
+ */
+function prjInto(out      , A      , B      , c        )       {
+  out[0] = A[0] + B[0] * c
+  out[1] = A[1] + B[1] * c
+  return out
+}
+
+/* simulatePressure */
+
+const { min } = Math
+
+/**
+ * Simulate pressure based on the distance between points and stroke size.
+ * This creates a natural-looking pressure effect based on drawing velocity.
+ *
+ * @param prevPressure The previous pressure value
+ * @param distance The distance from the previous point
+ * @param size The base stroke size
+ * @returns The simulated pressure value (0-1)
+ * @internal
+ */
+function simulatePressure(
+  prevPressure        ,
+  distance        ,
+  size        
+)         {
+  // Speed of change - how fast should the pressure be changing?
+  const sp = min(1, distance / size)
+  // Rate of change - how much of a change is there?
+  const rp = min(1, 1 - sp)
+  // Accelerate the pressure
+  return min(
+    1,
+    prevPressure + (rp - prevPressure) * (sp * RATE_OF_PRESSURE_CHANGE)
+  )
+}
+
+/* getStrokeRadius */
+/**
+ * Compute a radius based on the pressure.
+ * @param size
+ * @param thinning
+ * @param pressure
+ * @param easing
+ * @internal
+ */
+function getStrokeRadius(
+  size        ,
+  thinning        ,
+  pressure        ,
+  easing                        = (t) => t
+) {
+  return size * easing(0.5 - thinning * (0.5 - pressure))
+}
+
+/* getStrokePoints */
+
+
+
+// Scratch buffer for allocation-free vector calculation in hot loop
+const _vectorDiff       = [0, 0]
+
+/**
+ * Check if a pressure value is valid (defined and non-negative).
+ * Returns false for undefined, NaN, and negative values.
+ */
+function isValidPressure(pressure                    )                     {
+  return pressure != null && pressure >= 0
+}
+
+/**
+ * ## getStrokePoints
+ * @description Get an array of points as objects with an adjusted point, pressure, vector, distance, and runningLength.
+ * @param points An array of points (as `[x, y, pressure]` or `{x, y, pressure}`). Pressure is optional in both cases.
+ * @param options (optional) An object with options.
+ * @param options.size	The base size (diameter) of the stroke.
+ * @param options.thinning The effect of pressure on the stroke's size.
+ * @param options.smoothing	How much to soften the stroke's edges.
+ * @param options.easing	An easing function to apply to each point's pressure.
+ * @param options.simulatePressure Whether to simulate pressure based on velocity.
+ * @param options.start Cap, taper and easing for the start of the line.
+ * @param options.end Cap, taper and easing for the end of the line.
+ * @param options.last Whether to handle the points as a completed stroke.
+ */
+function getStrokePoints 
+                     
+                                                        
+ (points           , options = {}                 )                {
+  const { streamline = 0.5, size = 16, last: isComplete = false } = options
+
+  // If we don't have any points, return an empty array.
+  if (points.length === 0) return []
+
+  // Find the interpolation level between points.
+  const t = MIN_STREAMLINE_T + (1 - streamline) * STREAMLINE_T_RANGE
+
+  // Whatever the input is, make sure that the points are in number[][].
+  let pts = Array.isArray(points[0])
+    ? (points       )
+    : (points       ).map(({ x, y, pressure = DEFAULT_PRESSURE }) => [
+        x,
+        y,
+        pressure,
+      ])
+
+  // Add extra points between the two, to help avoid "dash" lines
+  // for strokes with tapered start and ends. Don't mutate the
+  // input array!
+  if (pts.length === 2) {
+    const last = pts[1]
+    pts = pts.slice(0, -1)
+    for (let i = 1; i < 5; i++) {
+      pts.push(lrp(pts[0]        , last        , i / 4))
+    }
+  }
+
+  // If there's only one point, add another point at a 1pt offset.
+  // Don't mutate the input array!
+  if (pts.length === 1) {
+    pts = [...pts, [...add(pts[0]        , UNIT_OFFSET), ...pts[0].slice(2)]]
+  }
+
+  // The strokePoints array will hold the points for the stroke.
+  // Start it out with the first point, which needs no adjustment.
+  const strokePoints                = [
+    {
+      point: [pts[0][0], pts[0][1]],
+      pressure: isValidPressure(pts[0][2]) ? pts[0][2] : DEFAULT_FIRST_PRESSURE,
+      vector: [...UNIT_OFFSET],
+      distance: 0,
+      runningLength: 0,
+    },
+  ]
+
+  // A flag to see whether we've already reached out minimum length
+  let hasReachedMinimumLength = false
+
+  // We use the runningLength to keep track of the total distance
+  let runningLength = 0
+
+  // We're set this to the latest point, so we can use it to calculate
+  // the distance and vector of the next point.
+  let prev = strokePoints[0]
+
+  const max = pts.length - 1
+
+  // Iterate through all of the points, creating StrokePoints.
+  for (let i = 1; i < pts.length; i++) {
+    const point       =
+      isComplete && i === max
+        ? // If we're at the last point, and `options.last` is true,
+          // then add the actual input point.
+          [pts[i][0], pts[i][1]]
+        : // Otherwise, using the t calculated from the streamline
+          // option, interpolate a new point between the previous
+          // point the current point.
+          lrp(prev.point, pts[i]        , t)
+
+    // If the new point is the same as the previous point, skip ahead.
+    if (isEqual(prev.point, point)) continue
+
+    // How far is the new point from the previous point?
+    const distance = dist(point, prev.point)
+
+    // Add this distance to the total "running length" of the line.
+    runningLength += distance
+
+    // At the start of the line, we wait until the new point is a
+    // certain distance away from the original point, to avoid noise
+    if (i < max && !hasReachedMinimumLength) {
+      if (runningLength < size) continue
+      hasReachedMinimumLength = true
+      // TODO: Backfill the missing points so that tapering works correctly.
+    }
+    // Create a new strokepoint (it will be the new "previous" one).
+    // Use scratch buffer for vector difference to reduce allocations
+    subInto(_vectorDiff, prev.point, point)
+    prev = {
+      // The adjusted point
+      point,
+      // The input pressure (or default if not specified)
+      pressure: isValidPressure(pts[i][2]) ? pts[i][2] : DEFAULT_PRESSURE,
+      // The vector from the current point to the previous point
+      vector: uni(_vectorDiff),
+      // The distance between the current point and the previous point
+      distance,
+      // The total distance so far
+      runningLength,
+    }
+
+    // Push it to the strokePoints array.
+    strokePoints.push(prev)
+  }
+
+  // Set the vector of the first point to be the same as the second point.
+  strokePoints[0].vector = strokePoints[1]?.vector || [0, 0]
+
+  return strokePoints
+}
+
+/* getStrokeOutlinePoints */
+
+
+
+
+
+// Scratch buffers for allocation-free hot loop calculations
+const _offset       = [0, 0]
+const _tl       = [0, 0]
+const _tr       = [0, 0]
+
+/**
+ * Draw a dot (circle) for very short strokes.
+ */
+function drawDot(center      , radius        )         {
+  const offsetPoint = add(center, [1, 1])
+  const start = prj(center, uni(per(sub(center, offsetPoint))), -radius)
+  const dotPts         = []
+  const step = 1 / START_CAP_SEGMENTS
+  for (let t = step; t <= 1; t += step) {
+    dotPts.push(rotAround(start, center, FIXED_PI * 2 * t))
+  }
+  return dotPts
+}
+
+/**
+ * Draw a rounded start cap by rotating points from right to left around the start point.
+ */
+function drawRoundStartCap(
+  center      ,
+  rightPoint      ,
+  segments        
+)         {
+  const cap         = []
+  const step = 1 / segments
+  for (let t = step; t <= 1; t += step) {
+    cap.push(rotAround(rightPoint, center, FIXED_PI * t))
+  }
+  return cap
+}
+
+/**
+ * Draw a flat start cap with squared-off edges.
+ */
+function drawFlatStartCap(
+  center      ,
+  leftPoint      ,
+  rightPoint      
+)         {
+  const cornersVector = sub(leftPoint, rightPoint)
+  const offsetA = mul(cornersVector, 0.5)
+  const offsetB = mul(cornersVector, 0.51)
+  return [
+    sub(center, offsetA),
+    sub(center, offsetB),
+    add(center, offsetB),
+    add(center, offsetA),
+  ]
+}
+
+/**
+ * Draw a rounded end cap (1.5 turns to handle sharp end turns correctly).
+ */
+function drawRoundEndCap(
+  center      ,
+  direction      ,
+  radius        ,
+  segments        
+)         {
+  const cap         = []
+  const start = prj(center, direction, radius)
+  const step = 1 / segments
+  for (let t = step; t < 1; t += step) {
+    cap.push(rotAround(start, center, FIXED_PI * 3 * t))
+  }
+  return cap
+}
+
+/**
+ * Draw a flat end cap with squared-off edges.
+ */
+function drawFlatEndCap(center      , direction      , radius        )         {
+  return [
+    add(center, mul(direction, radius)),
+    add(center, mul(direction, radius * 0.99)),
+    sub(center, mul(direction, radius * 0.99)),
+    sub(center, mul(direction, radius)),
+  ]
+}
+
+/**
+ * Compute the taper distance from a taper option value.
+ * - false or undefined: no taper (0)
+ * - true: taper the full length (max of size and totalLength)
+ * - number: use that exact taper distance
+ */
+function computeTaperDistance(
+  taper                              ,
+  size        ,
+  totalLength        
+)         {
+  if (taper === false || taper === undefined) return 0
+  if (taper === true) return Math.max(size, totalLength)
+  return taper
+}
+
+/**
+ * Compute the initial pressure by averaging the first few points.
+ * This prevents "fat starts" since drawn lines almost always start slow.
+ */
+function computeInitialPressure(
+  points               ,
+  shouldSimulatePressure         ,
+  size        
+)         {
+  return points.slice(0, 10).reduce((acc, curr) => {
+    let pressure = curr.pressure
+    if (shouldSimulatePressure) {
+      pressure = simulatePressure(acc, curr.distance, size)
+    }
+    return (acc + pressure) / 2
+  }, points[0].pressure)
+}
+
+/**
+ * ## getStrokeOutlinePoints
+ * @description Get an array of points (as `[x, y]`) representing the outline of a stroke.
+ * @param points An array of StrokePoints as returned from `getStrokePoints`.
+ * @param options (optional) An object with options.
+ * @param options.size	The base size (diameter) of the stroke.
+ * @param options.thinning The effect of pressure on the stroke's size.
+ * @param options.smoothing	How much to soften the stroke's edges.
+ * @param options.easing	An easing function to apply to each point's pressure.
+ * @param options.simulatePressure Whether to simulate pressure based on velocity.
+ * @param options.start Cap, taper and easing for the start of the line.
+ * @param options.end Cap, taper and easing for the end of the line.
+ * @param options.last Whether to handle the points as a completed stroke.
+ */
+function getStrokeOutlinePoints(
+  points               ,
+  options                         = {}                          
+)         {
+  const {
+    size = 16,
+    smoothing = 0.5,
+    thinning = 0.5,
+    simulatePressure: shouldSimulatePressure = true,
+    easing = (t) => t,
+    start = {},
+    end = {},
+    last: isComplete = false,
+  } = options
+
+  const { cap: capStart = true, easing: taperStartEase = (t) => t * (2 - t) } =
+    start
+
+  const { cap: capEnd = true, easing: taperEndEase = (t) => --t * t * t + 1 } =
+    end
+
+  // We can't do anything with an empty array or a stroke with negative size.
+  if (points.length === 0 || size <= 0) {
+    return []
+  }
+
+  // The total length of the line
+  const totalLength = points[points.length - 1].runningLength
+
+  const taperStart = computeTaperDistance(start.taper, size, totalLength)
+  const taperEnd = computeTaperDistance(end.taper, size, totalLength)
+
+  // The minimum allowed distance between points (squared)
+  const minDistance = Math.pow(size * smoothing, 2)
+
+  // Our collected left and right points
+  const leftPts         = []
+  const rightPts         = []
+
+  // Previous pressure (averaged from first few points to prevent fat starts)
+  let prevPressure = computeInitialPressure(
+    points,
+    shouldSimulatePressure,
+    size
+  )
+
+  // The current radius
+  let radius = getStrokeRadius(
+    size,
+    thinning,
+    points[points.length - 1].pressure,
+    easing
+  )
+
+  // The radius of the first saved point
+  let firstRadius                     = undefined
+
+  // Previous vector
+  let prevVector = points[0].vector
+
+  // Previous left and right points
+  let prevLeftPoint = points[0].point
+  let prevRightPoint = prevLeftPoint
+
+  // Temporary left and right points
+  let tempLeftPoint       = prevLeftPoint
+  let tempRightPoint       = prevRightPoint
+
+  // Keep track of whether the previous point is a sharp corner
+  // ... so that we don't detect the same corner twice
+  let isPrevPointSharpCorner = false
+
+  /*
+    Find the outline's left and right points
+
+    Iterating through the points and populate the rightPts and leftPts arrays,
+    skipping the first and last pointsm, which will get caps later on.
+  */
+
+  for (let i = 0; i < points.length; i++) {
+    let { pressure } = points[i]
+    const { point, vector, distance, runningLength } = points[i]
+    const isLastPoint = i === points.length - 1
+
+    // Removes noise from the end of the line
+    if (!isLastPoint && totalLength - runningLength < END_NOISE_THRESHOLD) {
+      continue
+    }
+
+    /*
+      Calculate the radius
+
+      If not thinning, the current point's radius will be half the size; or
+      otherwise, the size will be based on the current (real or simulated)
+      pressure.
+    */
+
+    if (thinning) {
+      if (shouldSimulatePressure) {
+        // If we're simulating pressure, then do so based on the distance
+        // between the current point and the previous point, and the size
+        // of the stroke. Otherwise, use the input pressure.
+        pressure = simulatePressure(prevPressure, distance, size)
+      }
+
+      radius = getStrokeRadius(size, thinning, pressure, easing)
+    } else {
+      radius = size / 2
+    }
+
+    if (firstRadius === undefined) {
+      firstRadius = radius
+    }
+
+    /*
+      Apply tapering
+
+      If the current length is within the taper distance at either the
+      start or the end, calculate the taper strengths. Apply the smaller
+      of the two taper strengths to the radius.
+    */
+
+    const taperStartStrength =
+      runningLength < taperStart
+        ? taperStartEase(runningLength / taperStart)
+        : 1
+
+    const taperEndStrength =
+      totalLength - runningLength < taperEnd
+        ? taperEndEase((totalLength - runningLength) / taperEnd)
+        : 1
+
+    radius = Math.max(
+      MIN_RADIUS,
+      radius * Math.min(taperStartStrength, taperEndStrength)
+    )
+
+    /* Add points to left and right */
+
+    /*
+      Handle sharp corners
+
+      Find the difference (dot product) between the current and next vector.
+      If the next vector is at more than a right angle to the current vector,
+      draw a cap at the current point.
+    */
+
+    const nextVector = (!isLastPoint ? points[i + 1] : points[i]).vector
+    const nextDpr = !isLastPoint ? dpr(vector, nextVector) : 1.0
+    const prevDpr = dpr(vector, prevVector)
+
+    const isPointSharpCorner = prevDpr < 0 && !isPrevPointSharpCorner
+    const isNextPointSharpCorner = nextDpr !== null && nextDpr < 0
+
+    if (isPointSharpCorner || isNextPointSharpCorner) {
+      // It's a sharp corner. Draw a rounded cap and move on to the next point
+      // Considering saving these and drawing them later? So that we can avoid
+      // crossing future points.
+
+      // Use mutable operations for the offset calculation
+      perInto(_offset, prevVector)
+      mulInto(_offset, _offset, radius)
+
+      const step = 1 / CORNER_CAP_SEGMENTS
+      for (let t = 0; t <= 1; t += step) {
+        // Calculate left point: rotate (point - offset) around point
+        subInto(_tl, point, _offset)
+        rotAroundInto(_tl, _tl, point, FIXED_PI * t)
+        tempLeftPoint = [_tl[0], _tl[1]]
+        leftPts.push(tempLeftPoint)
+
+        // Calculate right point: rotate (point + offset) around point
+        addInto(_tr, point, _offset)
+        rotAroundInto(_tr, _tr, point, FIXED_PI * -t)
+        tempRightPoint = [_tr[0], _tr[1]]
+        rightPts.push(tempRightPoint)
+      }
+
+      prevLeftPoint = tempLeftPoint
+      prevRightPoint = tempRightPoint
+
+      if (isNextPointSharpCorner) {
+        isPrevPointSharpCorner = true
+      }
+      continue
+    }
+
+    isPrevPointSharpCorner = false
+
+    // Handle the last point
+    if (isLastPoint) {
+      perInto(_offset, vector)
+      mulInto(_offset, _offset, radius)
+      leftPts.push(sub(point, _offset))
+      rightPts.push(add(point, _offset))
+      continue
+    }
+
+    /*
+      Add regular points
+
+      Project points to either side of the current point, using the
+      calculated size as a distance. If a point's distance to the
+      previous point on that side greater than the minimum distance
+      (or if the corner is kinda sharp), add the points to the side's
+      points array.
+    */
+
+    // Use mutable operations for offset calculation
+    lrpInto(_offset, nextVector, vector, nextDpr)
+    perInto(_offset, _offset)
+    mulInto(_offset, _offset, radius)
+
+    subInto(_tl, point, _offset)
+    tempLeftPoint = [_tl[0], _tl[1]]
+
+    if (i <= 1 || dist2(prevLeftPoint, tempLeftPoint) > minDistance) {
+      leftPts.push(tempLeftPoint)
+      prevLeftPoint = tempLeftPoint
+    }
+
+    addInto(_tr, point, _offset)
+    tempRightPoint = [_tr[0], _tr[1]]
+
+    if (i <= 1 || dist2(prevRightPoint, tempRightPoint) > minDistance) {
+      rightPts.push(tempRightPoint)
+      prevRightPoint = tempRightPoint
+    }
+
+    // Set variables for next iteration
+    prevPressure = pressure
+    prevVector = vector
+  }
+
+  /*
+    Drawing caps
+
+    Now that we have our points on either side of the line, we need to
+    draw caps at the start and end. Tapered lines don't have caps, but
+    may have dots for very short lines.
+  */
+
+  const firstPoint       = [points[0].point[0], points[0].point[1]]
+
+  const lastPoint       =
+    points.length > 1
+      ? [points[points.length - 1].point[0], points[points.length - 1].point[1]]
+      : add(points[0].point, [1, 1])
+
+  const startCap         = []
+
+  const endCap         = []
+
+  // Draw a dot for very short or completed strokes
+  if (points.length === 1) {
+    if (!(taperStart || taperEnd) || isComplete) {
+      return drawDot(firstPoint, firstRadius || radius)
+    }
+  } else {
+    // Draw start cap (unless tapered)
+    if (taperStart || (taperEnd && points.length === 1)) {
+      // The start point is tapered, noop
+    } else if (capStart) {
+      startCap.push(
+        ...drawRoundStartCap(firstPoint, rightPts[0], START_CAP_SEGMENTS)
+      )
+    } else {
+      startCap.push(...drawFlatStartCap(firstPoint, leftPts[0], rightPts[0]))
+    }
+
+    // Draw end cap (unless tapered)
+    const direction = per(neg(points[points.length - 1].vector))
+
+    if (taperEnd || (taperStart && points.length === 1)) {
+      // Tapered end - push the last point to the line
+      endCap.push(lastPoint)
+    } else if (capEnd) {
+      endCap.push(
+        ...drawRoundEndCap(lastPoint, direction, radius, END_CAP_SEGMENTS)
+      )
+    } else {
+      endCap.push(...drawFlatEndCap(lastPoint, direction, radius))
+    }
+  }
+
+  /*
+    Return the points in the correct winding order: begin on the left side, then
+    continue around the end cap, then come back along the right side, and finally
+    complete the start cap.
+  */
+
+  return leftPts.concat(endCap, rightPts.reverse(), startCap)
+}
+
+/* getStroke */
+
+
+
+/**
+ * ## getStroke
+ * @description Get an array of points describing a polygon that surrounds the input points.
+ * @param points An array of points (as `[x, y, pressure]` or `{x, y, pressure}`). Pressure is optional in both cases.
+ * @param options (optional) An object with options.
+ * @param options.size	The base size (diameter) of the stroke.
+ * @param options.thinning The effect of pressure on the stroke's size.
+ * @param options.smoothing	How much to soften the stroke's edges.
+ * @param options.easing	An easing function to apply to each point's pressure.
+ * @param options.simulatePressure Whether to simulate pressure based on velocity.
+ * @param options.start Cap, taper and easing for the start of the line.
+ * @param options.end Cap, taper and easing for the end of the line.
+ * @param options.last Whether to handle the points as a completed stroke.
+ */
+
+function getStroke(
+  points                                                            ,
+  options                = {}                 
+)         {
+  return getStrokeOutlinePoints(getStrokePoints(points, options), options)
+}
+
+
+return getStroke;
+})();
 const INK_W = 1000, INK_LINE = 46, INK_H0 = 368;
-const INK_COLORS = [['#23272b', '검정'], ['#1f4fbf', '파랑'], ['#d23a3a', '빨강'], ['#1f7a4a', '초록'], ['#8a3fc0', '보라'], ['#e07a00', '주황']];
-const INK_SIZES = [[2.2, '가늘게'], [3.8, '보통'], [6.5, '굵게']];
-const inkPen = { c: '#23272b', w: 3.8, erase: false };
+const INK_COLORS = [['#23272b', '검정'], ['#1f4fbf', '파랑'], ['#d23a3a', '빨강'], ['#1f7a4a', '초록'], ['#8a3fc0', '보라'], ['#e07a00', '주황'], ['#f2c200', '노랑']];
+const INK_SIZES = [[1.3, '가늘게'], [2.1, '보통'], [3.4, '굵게']];   // 화면에서 보이는 굵기(px)
+const HL_PX = 16;                                                   // 형광펜 굵기(px)
+const inkPen = { c: '#23272b', hc: '#f2c200', px: 2.1, tool: 'pen' }; // tool: pen · hl(형광펜) · erase(지우개)
+let inkDrawing = null, penSeen = false, inkRaf = 0;
+function inkToolsHTML(kind) {
+  return `${INK_COLORS.map(([c, n]) => `<button type="button" class="ink-c" data-ink-c="${c}" style="--c:${c}" aria-label="${n}"></button>`).join('')}<span class="ink-sep"></span>${INK_SIZES.map(([w, n]) => `<button type="button" class="ink-w" data-ink-w="${w}" aria-label="${n}"><i style="--w:${Math.round(w * 2.2)}px"></i></button>`).join('')}<span class="ink-sep"></span><button type="button" class="ink-tool" data-ink-tool="pen" aria-label="펜">🖊</button><button type="button" class="ink-tool" data-ink-tool="hl" aria-label="형광펜">🖍</button><button type="button" class="ink-tool" data-ink-tool="erase" aria-label="지우개">지우개</button><button type="button" data-ink-t="undo" aria-label="되돌리기">↶</button>` +
+    (kind === 'pad' ? `<button type="button" data-ink-t="clear">모두 지우기</button><button type="button" data-ink-t="more">＋ 칸</button><span class="grow"></span><button type="button" class="primary" data-ink-t="done">완료</button>`
+      : `<button type="button" data-mink-t="finger" class="mk-finger" aria-pressed="false" title="손가락으로 쓰기">✋ 손가락</button><span class="grow"></span><button type="button" data-mink-t="close" aria-label="필기 닫기">✕</button>`);
+}
+function inkToolState(root) {
+  const cur = inkPen.tool === 'hl' ? inkPen.hc : inkPen.c;
+  $$('[data-ink-c]', root).forEach(b => b.classList.toggle('on', inkPen.tool !== 'erase' && b.dataset.inkC === cur));
+  $$('[data-ink-w]', root).forEach(b => b.classList.toggle('on', +b.dataset.inkW === inkPen.px));
+  $$('[data-ink-tool]', root).forEach(b => b.classList.toggle('on', b.dataset.inkTool === inkPen.tool));
+  root.classList.toggle('erasing', inkPen.tool === 'erase');
+}
+function inkPickTool(b) {
+  if (b.dataset.inkC) { if (inkPen.tool === 'hl') inkPen.hc = b.dataset.inkC; else { inkPen.c = b.dataset.inkC; inkPen.tool = 'pen'; } }
+  else if (b.dataset.inkW) { inkPen.px = +b.dataset.inkW; if (inkPen.tool === 'erase') inkPen.tool = 'pen'; }
+  else if (b.dataset.inkTool) inkPen.tool = b.dataset.inkTool;
+  else return false;
+  $$('.ink.active, .mink-layer').forEach(inkToolState); return true;
+}
+function strokeOpts(s, last) {
+  const hl = s.t === 'hl';
+  return { size: s.w, thinning: hl ? 0 : (s.sp ? 0.45 : 0.6), smoothing: 0.6, streamline: hl ? 0.5 : 0.3, simulatePressure: !!s.sp && !hl,
+    easing: t => t, start: { cap: true, taper: 0 }, end: { cap: true, taper: 0 }, last };
+}
+function strokePath(s, live, extra) {
+  const pts = []; const p = s.p; for (let i = 0; i < p.length; i += 3) pts.push([p[i], p[i + 1], p[i + 2] / 100]);
+  if (extra) pts.push(...extra);
+  const o = getStroke(pts, strokeOpts(s, !live)); const path = new Path2D(); if (!o.length) return path;
+  path.moveTo(o[0][0], o[0][1]);
+  for (let i = 1; i < o.length; i++) { const [x0, y0] = o[i - 1], [x1, y1] = o[i]; path.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2); }
+  path.closePath(); return path;
+}
+function paintStroke(g, s, live, extra) {
+  const path = live ? strokePath(s, true, extra) : (s._path || (s._path = strokePath(s)));
+  g.globalAlpha = s.t === 'hl' ? 0.3 : 1; g.fillStyle = s.c; g.fill(path); g.globalAlpha = 1;
+}
+function strokeBox(s) {
+  if (!s._bb) { let a = 1e9, b = 1e9, c = -1e9, d = -1e9; for (let i = 0; i < s.p.length; i += 3) { a = Math.min(a, s.p[i]); b = Math.min(b, s.p[i + 1]); c = Math.max(c, s.p[i]); d = Math.max(d, s.p[i + 1]); } const m = s.w; s._bb = [a - m, b - m, c + m, d + m]; }
+  return s._bb;
+}
+function strokeHit(s, x, y, r) {
+  const bb = strokeBox(s); if (x < bb[0] - r || x > bb[2] + r || y < bb[1] - r || y > bb[3] + r) return false;
+  const R = r + s.w / 2; for (let i = 0; i < s.p.length; i += 3) if (Math.hypot(s.p[i] - x, s.p[i + 1] - y) < R) return true; return false;
+}
+const strokeOut = s => ({ c: s.c, w: s.w, p: s.p, ...(s.t ? { t: s.t } : {}), ...(s.sp ? { sp: 1 } : {}), ...(s.b ? { b: s.b } : {}) });
+function parseInk(json) {
+  let d = null; try { d = JSON.parse(json); } catch (e) { return null; }
+  if (!d || !Array.isArray(d.s)) return null;
+  if ((d.v || 1) < 2) d.s.forEach(s => { for (let i = 2; i < s.p.length; i += 3) s.p[i] = Math.min(100, s.p[i] * 11); });   // v0.22 형식 → 필압 0~100
+  return d;
+}
+const inkJSON = (d, extra) => JSON.stringify({ v: 2, ...extra, s: d.s.map(strokeOut) });
+function inkSample(e, surf) {
+  const [x, y] = surf.local(e.clientX, e.clientY);
+  const pr = e.pointerType === 'pen' ? Math.round(Math.max(0.06, e.pressure || 0.5) * 100) : 50;
+  return [Math.round(x * 10) / 10, Math.round(y * 10) / 10, pr];
+}
+function inkFrame(fn) { if (inkRaf) return; inkRaf = requestAnimationFrame(() => { inkRaf = 0; fn(); }); }
+/* 펜이 닿는 순간 ~ 뗄 때까지 (답 칸 손글씨 판과 오른쪽 여백 필기가 함께 씀) */
+function inkDown(e, surf) {
+  e.preventDefault(); try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
+  const pt = inkSample(e, surf);
+  if (inkPen.tool === 'erase') { inkDrawing = { surf, pid: e.pointerId, erase: true, hit: surf.erase(pt[0], pt[1]) }; return; }
+  const hl = inkPen.tool === 'hl', k = surf.k();
+  const s = { c: hl ? inkPen.hc : inkPen.c, w: Math.round((hl ? HL_PX : inkPen.px) / k * 100) / 100, p: [], ...(hl ? { t: 'hl' } : {}), ...(e.pointerType !== 'pen' && !hl ? { sp: 1 } : {}) };
+  const dy = surf.begin(s, pt[0], pt[1]) || 0;
+  s.p.push(pt[0], Math.round((pt[1] - dy) * 10) / 10, pt[2]);
+  inkDrawing = { surf, s, dy, pid: e.pointerId, extra: null };
+  inkFrame(() => inkDrawing && surf.live(s));
+}
+function inkMove(e) {
+  const D = inkDrawing; if (!D || e.pointerId !== D.pid) return; e.preventDefault();
+  const evs = (e.getCoalescedEvents && e.getCoalescedEvents()) || []; const list = evs.length ? evs : [e];
+  if (D.erase) { for (const ev of list) { const pt = inkSample(ev, D.surf); if (D.surf.erase(pt[0], pt[1])) D.hit = true; } return; }
+  const s = D.s, minD = 0.9;
+  for (const ev of list) {
+    const pt = inkSample(ev, D.surf); const y = Math.round((pt[1] - D.dy) * 10) / 10; const n = s.p.length;
+    if (Math.hypot(pt[0] - s.p[n - 3], y - s.p[n - 2]) < minD) { s.p[n - 1] = Math.max(s.p[n - 1], pt[2]); continue; }
+    s.p.push(pt[0], y, pt[2]);
+  }
+  const pred = e.getPredictedEvents ? e.getPredictedEvents() : [];
+  D.extra = pred.length ? pred.slice(0, 2).map(ev => { const pt = inkSample(ev, D.surf); return [pt[0], pt[1] - D.dy, pt[2] / 100]; }) : null;
+  inkFrame(() => inkDrawing === D && D.surf.live(s, D.extra));
+}
+function inkUp(e) {
+  const D = inkDrawing; if (!D || (e && e.pointerId !== D.pid)) return; inkDrawing = null;
+  if (D.erase) { if (D.hit) D.surf.changed(); return; }
+  D.surf.commit(D.s);
+}
+
+/* ---------- ① 답 칸 손글씨 판: 폭 1000 기준 좌표 → 폰·아이패드·노트북 어디서나 같은 모양 ---------- */
 const inkState = new Map();
-let inkActive = null, inkDrawing = null, penSeen = false;
+let inkActive = null;
 function inkData(id) {
   if (!inkState.has(id)) {
-    const a = Store.answers()[id]; let d = null; try { d = a && a.ink ? JSON.parse(a.ink) : null; } catch (e) { console.warn(e); }
-    inkState.set(id, d && Array.isArray(d.s) ? { h: Math.max(INK_H0, d.h || INK_H0), s: d.s, undo: [] } : { h: INK_H0, s: [], undo: [] });
+    const a = Store.answers()[id]; const d = a && a.ink ? parseInk(a.ink) : null;
+    inkState.set(id, d ? { h: Math.max(INK_H0, d.h || INK_H0), s: d.s, undo: [] } : { h: INK_H0, s: [], undo: [] });
   }
   return inkState.get(id);
 }
-function strokeDraw(g, s, from = 1) {
-  const p = s.p, n = p.length / 3; g.strokeStyle = s.c; g.fillStyle = s.c; g.lineCap = 'round'; g.lineJoin = 'round';
-  const W = pr => s.w * (0.55 + pr / 10);
-  if (n === 1) { g.beginPath(); g.arc(p[0], p[1], W(p[2]) / 2, 0, 7); g.fill(); return; }
-  for (let i = Math.max(1, from); i < n; i++) {
-    const x0 = p[i * 3 - 3], y0 = p[i * 3 - 2], x1 = p[i * 3], y1 = p[i * 3 + 1];
-    const xa = i > 1 ? (p[i * 3 - 6] + x0) / 2 : x0, ya = i > 1 ? (p[i * 3 - 5] + y0) / 2 : y0;
-    const last = i === n - 1 && s.done;
-    g.lineWidth = W((p[i * 3 - 1] + p[i * 3 + 2]) / 2);
-    g.beginPath(); g.moveTo(xa, ya); g.quadraticCurveTo(x0, y0, last ? x1 : (x0 + x1) / 2, last ? y1 : (y0 + y1) / 2); g.stroke();
-  }
-}
-function drawInk(pad) {
+function drawInk(pad, live, extra) {
   const d = inkData(pad.dataset.ink), cv = $('canvas', pad);
   const cw = cv.clientWidth; if (!cw) return;
   const k = cw / INK_W, dpr = Math.min(3, devicePixelRatio || 1), ch = Math.round(d.h * k);
@@ -385,18 +1494,26 @@ function drawInk(pad) {
   const g = cv.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H); g.setTransform(dpr * k, 0, 0, dpr * k, 0, 0);
   g.strokeStyle = '#e4dcc4'; g.lineWidth = 1.2 / k;
   for (let y = INK_LINE; y < d.h; y += INK_LINE) { g.beginPath(); g.moveTo(14, y); g.lineTo(INK_W - 14, y); g.stroke(); }
-  d.s.forEach(s => strokeDraw(g, { ...s, done: true }));
+  d.s.forEach(s => paintStroke(g, s));
+  if (live) paintStroke(g, live, true, extra);
 }
-function inkTools(pad) {
-  $$('[data-ink-c]', pad).forEach(b => b.classList.toggle('on', !inkPen.erase && b.dataset.inkC === inkPen.c));
-  $$('[data-ink-w]', pad).forEach(b => b.classList.toggle('on', +b.dataset.inkW === inkPen.w));
-  $('[data-ink-t="erase"]', pad).classList.toggle('on', inkPen.erase);
-  $('[data-ink-t="undo"]', pad).disabled = !inkData(pad.dataset.ink).undo.length;
-  pad.classList.toggle('erasing', inkPen.erase);
+function padSurf(pad) {
+  const cv = $('canvas', pad), id = pad.dataset.ink, d = inkData(id);
+  const S = {
+    k: () => cv.clientWidth / INK_W,
+    local: (cx, cy) => { const r = cv.getBoundingClientRect(), k = r.width / INK_W; return [(cx - r.left) / k, (cy - r.top) / k]; },
+    begin: () => 0,
+    live: (s, extra) => { const y = s.p[s.p.length - 2]; if (y > d.h - 80) d.h += INK_LINE * 5; drawInk(pad, s, extra); },
+    commit: s => { d.s.push(s); d.undo.push({ add: s }); if (d.undo.length > 300) d.undo.shift(); S.changed(); },
+    erase: (x, y) => { const r = 10 + 8 / S.k(); const gone = []; d.s.forEach((s, i) => { if (strokeHit(s, x, y, r)) gone.push([i, s]); }); if (!gone.length) return false; gone.slice().reverse().forEach(([i]) => d.s.splice(i, 1)); d.undo.push({ erase: gone }); drawInk(pad); return true; },
+    changed: () => { drawInk(pad); inkSave(id); padTools(pad); },
+  };
+  return S;
 }
+function padTools(pad) { inkToolState(pad); $('[data-ink-t="undo"]', pad).disabled = !inkData(pad.dataset.ink).undo.length; }
 function inkActivate(pad) {
   if (inkActive && inkActive !== pad) inkDone(inkActive);
-  inkActive = pad; pad.hidden = false; pad.classList.add('active'); inkTools(pad); drawInk(pad);
+  inkActive = pad; pad.hidden = false; pad.classList.add('active'); padTools(pad); drawInk(pad);
   const b = $(`[data-ink-open="${pad.dataset.ink}"]`); if (b) b.setAttribute('aria-pressed', 'true');
 }
 function inkDone(pad) {
@@ -408,80 +1525,156 @@ const inkSaveT = {};
 function inkSave(id) { clearTimeout(inkSaveT[id]); inkSaveT[id] = setTimeout(() => inkSaveNow(id), 700); }
 async function inkSaveNow(id) {
   clearTimeout(inkSaveT[id]); const d = inkData(id);
-  const json = d.s.length ? JSON.stringify({ v: 1, h: d.h, s: d.s.map(({ c, w, p }) => ({ c, w, p })) }) : '';
-  const prev = (Store.answers()[id] || {}).ink || '';
-  if (json === prev) return;
+  const json = d.s.length ? inkJSON(d, { h: d.h }) : '';
+  if (json === ((Store.answers()[id] || {}).ink || '')) return;
   if (json.length > 850000) { toast('손글씨가 너무 많아 더 저장할 수 없습니다. 다음 칸에 이어 써 주세요'); return; }
   const ok = await Store.setAnswer(id, undefined, json); setSaved(id, ok); renderNotes();
 }
-function inkPt(e, cv) { const r = cv.getBoundingClientRect(), k = r.width / INK_W; return [Math.round((e.clientX - r.left) / k), Math.round((e.clientY - r.top) / k), e.pointerType === 'pen' ? Math.max(1, Math.min(9, Math.round((e.pressure || 0.5) * 9))) : 5]; }
-function inkErase(d, x, y) {
-  const R = 16 + inkPen.w, hit = [];
-  d.s.forEach((s, i) => { for (let j = 0; j < s.p.length; j += 3) if (Math.abs(s.p[j] - x) < R && Math.abs(s.p[j + 1] - y) < R) { hit.push(i); break; } });
-  if (!hit.length) return false;
-  const gone = hit.map(i => [i, d.s[i]]); hit.reverse().forEach(i => d.s.splice(i, 1)); d.undo.push({ erase: gone }); return true;
+
+/* ---------- ② 오른쪽 여백 필기 (넓은 화면·아이패드 가로) ----------
+ * 본문 오른쪽 절반 가까이를 필기 공간으로 씁니다. 획마다 '옆에 있는 문단'을 기준으로 저장하므로
+ * 글자 크기·번역·기기가 달라져도 필기가 그 문단 옆에 붙어 함께 스크롤됩니다. 단원(날짜)마다 따로 저장. */
+const M = { layer: null, view: null, cv: null, k: 1, anchors: [], tops: new Map(), units: new Map(), dirty: new Set(), undo: [], finger: false, ro: null, warned: false };
+const minkWant = () => !!Store.pref('mink', false) && !isMob();
+const minkOn = () => $('#reader').classList.contains('mink');
+const heroKey = () => st.lid + '-HERO';
+function minkUnit(uid) {
+  if (!M.units.has(uid)) { const v = Store.minks()[uid]; const d = v && v.ink ? parseInk(v.ink) : null; M.units.set(uid, { s: d ? d.s : [] }); }
+  return M.units.get(uid);
 }
-function inkGrowIfNeeded(pad, d, y) { if (y > d.h - 80) { d.h += INK_LINE * 5; drawInk(pad); return true; } return false; }
+function minkMeasure() {
+  if (!M.layer) return; const lr = M.layer.getBoundingClientRect(); M.k = M.layer.clientWidth / INK_W;
+  M.anchors = []; M.tops.clear();
+  $$('.hero, .blk[data-id], .ans-box[data-box]', M.layer.parentNode).forEach(el => {
+    const id = el.classList.contains('hero') ? 'H:' + st.lid : el.dataset.box ? 'A:' + el.dataset.box : el.dataset.id;
+    const top = el.getBoundingClientRect().top - lr.top; const sec = el.closest('.unit');
+    const a = { id, top, unit: sec ? sec.id : heroKey() }; M.anchors.push(a); M.tops.set(id, a);
+  });
+  M.anchors.sort((a, b) => a.top - b.top);
+  M.view.style.height = $('#reader').clientHeight + 'px';
+}
+function minkAnchorAt(yPx) { let a = M.anchors[0]; for (const x of M.anchors) { if (x.top <= yPx + 4) a = x; else break; } return a; }
+function minkStrokes() { const out = []; new Set(M.anchors.map(a => a.unit)).forEach(u => minkUnit(u).s.forEach(s => out.push([u, s]))); return out; }
+function minkRender(live, extra) {
+  if (!M.layer || !M.layer.isConnected) return;
+  const cv = M.cv, W0 = cv.clientWidth, H0 = cv.clientHeight; if (!W0) return;
+  const dpr = Math.min(3, devicePixelRatio || 1), W = Math.round(W0 * dpr), H = Math.round(H0 * dpr);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const g = cv.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
+  const viewTop = M.view.getBoundingClientRect().top - M.layer.getBoundingClientRect().top, k = M.k;
+  const draw = (s, isLive) => {
+    const a = M.tops.get(s.b); if (!a) return; const oy = a.top - viewTop;
+    if (!isLive) { const bb = strokeBox(s); if (oy + bb[3] * k < 0 || oy + bb[1] * k > H0) return; }
+    g.setTransform(dpr * k, 0, 0, dpr * k, 0, dpr * oy); paintStroke(g, s, isLive, extra);
+  };
+  minkStrokes().forEach(([, s]) => draw(s));
+  if (live) draw(live, true);
+  M.layer.classList.toggle('empty', !minkStrokes().length && !live);
+}
+const minkSurf = {
+  k: () => M.k,
+  local: (cx, cy) => { const r = M.layer.getBoundingClientRect(); return [(cx - r.left) / M.k, (cy - r.top) / M.k]; },
+  begin: (s, x, y) => { const a = minkAnchorAt(y * M.k); s.b = a.id; s._u = a.unit; return a.top / M.k; },
+  live: (s, extra) => minkRender(s, extra),
+  commit: s => { const u = s._u; delete s._u; minkUnit(u).s.push(s); M.undo.push({ add: [u, s] }); if (M.undo.length > 300) M.undo.shift(); minkSurf.changed([u]); },
+  erase: (x, y) => {
+    const r = 8 / M.k + 6; const gone = [];
+    minkStrokes().forEach(([u, s]) => { const a = M.tops.get(s.b); if (a && strokeHit(s, x, y - a.top / M.k, r)) gone.push([u, s]); });
+    if (!gone.length) return false;
+    const rec = gone.map(([u, s]) => { const arr = minkUnit(u).s, i = arr.indexOf(s); arr.splice(i, 1); M.dirty.add(u); return [u, i, s]; });
+    M.undo.push({ erase: rec }); minkRender(); return true;
+  },
+  changed: us => { (us || []).forEach(u => M.dirty.add(u)); minkRender(); minkTools(); minkSave(); },
+};
+let minkSaveT;
+function minkSave() { clearTimeout(minkSaveT); minkSaveT = setTimeout(minkSaveNow, 800); }
+async function minkSaveNow() {
+  clearTimeout(minkSaveT); const us = [...M.dirty]; M.dirty.clear(); let ok = true;
+  for (const u of us) {
+    const d = minkUnit(u); const json = d.s.length ? inkJSON(d) : '';
+    if (json.length > 850000) { toast('이 단원의 여백 필기가 너무 많아 더 저장할 수 없습니다'); continue; }
+    if (json !== ((Store.minks()[u] || {}).ink || '')) ok = (await Store.setMink(u, json)) && ok;
+  }
+  if (!ok) toast('필기를 저장하지 못했습니다. 인터넷 연결을 확인해 주세요'); renderNotes();
+}
+function minkTools() { if (!M.layer) return; inkToolState(M.layer); $('[data-ink-t="undo"]', M.layer).disabled = !M.undo.length; const f = $('[data-mink-t="finger"]', M.layer); f.setAttribute('aria-pressed', M.finger); f.classList.toggle('on', M.finger); M.layer.classList.toggle('finger', M.finger); }
+function minkMount() {
+  const r = $('#reader'); const wrap = $('.page-wrap.bk', r);
+  if (!minkOn() || !wrap) { if (M.layer) M.layer.remove(); M.layer = null; return; }
+  if (!M.layer || M.layer.parentNode !== wrap) {
+    if (M.layer) M.layer.remove();
+    M.layer = document.createElement('div'); M.layer.className = 'mink-layer empty'; M.layer.setAttribute('aria-label', '여백 필기');
+    M.layer.innerHTML = `<div class="mink-view"><canvas aria-label="필기하는 곳"></canvas><div class="mink-tools ink-tools" role="toolbar" aria-label="필기 도구">${inkToolsHTML('mink')}</div><p class="mink-hint">✍ 여기에 자유롭게 필기하세요<br><small>애플펜슬은 바로 · 마우스는 끌어서 · 손가락은 ✋를 켜고</small></p></div>`;
+    wrap.appendChild(M.layer); M.view = $('.mink-view', M.layer); M.cv = $('canvas', M.layer); M.undo = [];
+    if (M.ro) M.ro.disconnect(); M.ro = new ResizeObserver(() => { minkMeasure(); minkRender(); }); M.ro.observe(wrap);
+  }
+  minkMeasure(); minkTools(); minkRender();
+}
+function applyMinkMode() {
+  const want = minkWant(), r = $('#reader');
+  document.body.classList.toggle('mink-on', want);
+  $('#btn-mink').setAttribute('aria-pressed', want ? 'true' : 'false'); $('#btn-mink').hidden = isMob();
+  const ok = want && r.clientWidth >= 700;
+  if (want && !ok && !M.warned) { M.warned = true; toast('필기 공간은 넓은 화면에서 열립니다 (아이패드는 가로로 돌려 주세요)'); }
+  if (ok !== r.classList.contains('mink')) { r.classList.toggle('mink', ok); if (trOn()) applyTr(); else renderStickies(); }
+  minkMount();
+}
+function minkReload() { if (inkDrawing) return; M.units.clear(); minkRender(); }
+$('#btn-mink').addEventListener('click', () => { Store.setPref('mink', !Store.pref('mink', false)); M.warned = false; applyMinkMode(); if (minkOn()) toast('오른쪽 여백에 필기할 수 있습니다 · 본문과 함께 넘어갑니다'); });
+$('#reader').addEventListener('scroll', () => { if (M.layer) inkFrame(() => minkRender()); }, { passive: true });
+
+/* ---------- 펜 입력 연결 ---------- */
 const reader0 = $('#reader');
 reader0.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'pen') penSeen = true;
+  if (e.button > 0) return;
+  const mc = e.target.closest('.mink-view canvas');
+  if (mc) { if (e.pointerType === 'touch' && (!M.finger || penSeen)) return; inkDown(e, minkSurf); return; }
   const cv = e.target.closest('.ink canvas'); if (!cv) return;
   const pad = cv.parentElement;
-  if (e.pointerType === 'pen') penSeen = true;
   if (!pad.classList.contains('active')) { if (e.pointerType !== 'pen') return; inkActivate(pad); }
   if (e.pointerType === 'touch' && penSeen) return; // 펜을 쓰는 중에는 손바닥이 닿아도 그려지지 않게
-  if (e.button > 0) return;
-  e.preventDefault(); try { cv.setPointerCapture(e.pointerId); } catch (_) {}
-  const d = inkData(pad.dataset.ink), pt = inkPt(e, cv);
-  if (inkPen.erase) { inkDrawing = { pad, cv, d, erase: true, pid: e.pointerId, hit: false }; if (inkErase(d, pt[0], pt[1])) { inkDrawing.hit = true; drawInk(pad); } return; }
-  const s = { c: inkPen.c, w: inkPen.w, p: pt };
-  d.s.push(s); inkDrawing = { pad, cv, d, s, pid: e.pointerId };
-  const g = cv.getContext('2d'); strokeDraw(g, s);
+  inkDown(e, padSurf(pad));
 });
-reader0.addEventListener('pointermove', e => {
-  if (!inkDrawing || e.pointerId !== inkDrawing.pid) return; e.preventDefault();
-  const { pad, cv, d, s } = inkDrawing; const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
-  for (const ev of (evs.length ? evs : [e])) {
-    const pt = inkPt(ev, cv);
-    if (inkDrawing.erase) { if (inkErase(d, pt[0], pt[1])) { inkDrawing.hit = true; drawInk(pad); } continue; }
-    const n = s.p.length; if (Math.hypot(pt[0] - s.p[n - 3], pt[1] - s.p[n - 2]) < 2) continue;
-    s.p.push(...pt);
-    if (!inkGrowIfNeeded(pad, d, pt[1])) strokeDraw(cv.getContext('2d'), s, s.p.length / 3 - 1);
-  }
-});
-function inkEnd(e) {
-  if (!inkDrawing || (e && e.pointerId !== inkDrawing.pid)) return;
-  const { pad, d, s, erase, hit } = inkDrawing; inkDrawing = null;
-  if (!erase) { d.undo.push({ add: s }); if (d.undo.length > 200) d.undo.shift(); }
-  if (!erase || hit) { drawInk(pad); inkSave(pad.dataset.ink); }
-  inkTools(pad);
-}
-reader0.addEventListener('pointerup', inkEnd); reader0.addEventListener('pointercancel', inkEnd);
-/* 아이패드: 애플펜슬은 바로 쓰기, 손가락은 화면 넘기기 (쓰기 모드에선 손가락도 쓰기) */
+reader0.addEventListener('pointermove', inkMove);
+reader0.addEventListener('pointerup', inkUp); reader0.addEventListener('pointercancel', inkUp);
+/* 아이패드: 애플펜슬은 바로 쓰기, 손가락은 화면 넘기기 (쓰기 모드·✋ 켜면 손가락도 쓰기) */
 reader0.addEventListener('touchstart', e => {
-  const cv = e.target.closest && e.target.closest('.ink canvas'); if (!cv) return;
-  const t = e.touches[0]; const active = cv.parentElement.classList.contains('active');
-  if (t.touchType === 'stylus' || (active && !penSeen)) e.preventDefault();
+  const t = e.touches[0]; const el = e.target.closest && e.target.closest('.ink canvas, .mink-view canvas'); if (!el) return;
+  const fingerOk = el.closest('.mink-layer') ? M.finger : el.parentElement.classList.contains('active');
+  if (t.touchType === 'stylus' || (fingerOk && !penSeen)) e.preventDefault();
 }, { passive: false });
 reader0.addEventListener('click', e => {
   const fo = e.target.closest('[data-afont-open]'); if (fo) { if (afPop.hidden) openAFont(fo); else afPop.hidden = true; return; }
   const op = e.target.closest('[data-ink-open]');
   if (op) { const pad = $(`.ink[data-ink="${op.dataset.inkOpen}"]`); if (pad.classList.contains('active')) inkDone(pad); else { inkActivate(pad); pad.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } return; }
+  const tb = e.target.closest('[data-ink-c], [data-ink-w], [data-ink-tool]'); if (tb) { inkPickTool(tb); return; }
+  const ml = e.target.closest('.mink-layer');
+  if (ml) {
+    const t = e.target.closest('[data-mink-t], [data-ink-t]'); if (!t) return;
+    if (t.dataset.minkT === 'finger') { M.finger = !M.finger; minkTools(); toast(M.finger ? '손가락으로 필기 켜짐 · 필기 칸에서는 화면이 안 넘어갑니다' : '손가락으로 필기 꺼짐'); }
+    else if (t.dataset.minkT === 'close') { Store.setPref('mink', false); applyMinkMode(); }
+    else if (t.dataset.inkT === 'undo') {
+      const u = M.undo.pop(); if (!u) return;
+      if (u.add) { const [un, s] = u.add; const arr = minkUnit(un).s, i = arr.lastIndexOf(s); if (i >= 0) arr.splice(i, 1); M.dirty.add(un); }
+      else if (u.erase) u.erase.slice().reverse().forEach(([un, i, s]) => { minkUnit(un).s.splice(i, 0, s); M.dirty.add(un); });
+      minkSurf.changed();
+    }
+    return;
+  }
   const pad = e.target.closest('.ink'); if (!pad) return;
-  const c = e.target.closest('[data-ink-c]'); if (c) { inkPen.c = c.dataset.inkC; inkPen.erase = false; inkTools(pad); return; }
-  const w = e.target.closest('[data-ink-w]'); if (w) { inkPen.w = +w.dataset.inkW; inkTools(pad); return; }
   const t = e.target.closest('[data-ink-t]'); if (!t) return;
   const d = inkData(pad.dataset.ink);
   switch (t.dataset.inkT) {
     case 'start': inkActivate(pad); break;
-    case 'erase': inkPen.erase = !inkPen.erase; inkTools(pad); break;
-    case 'undo': { const u = d.undo.pop(); if (!u) break; if (u.add) { const i = d.s.lastIndexOf(u.add); if (i >= 0) d.s.splice(i, 1); } else if (u.erase) u.erase.forEach(([i, s]) => d.s.splice(i, 0, s)); else if (u.clear) d.s = u.clear; drawInk(pad); inkTools(pad); inkSave(pad.dataset.ink); break; }
-    case 'clear': if (d.s.length && confirm('이 칸의 손글씨를 모두 지울까요? (↶로 되돌릴 수 있어요)')) { d.undo.push({ clear: d.s }); d.s = []; drawInk(pad); inkTools(pad); inkSave(pad.dataset.ink); } break;
+    case 'undo': { const u = d.undo.pop(); if (!u) break; if (u.add) { const i = d.s.lastIndexOf(u.add); if (i >= 0) d.s.splice(i, 1); } else if (u.erase) u.erase.forEach(([i, s]) => d.s.splice(i, 0, s)); else if (u.clear) d.s = u.clear; padSurf(pad).changed(); break; }
+    case 'clear': if (d.s.length && confirm('이 칸의 손글씨를 모두 지울까요? (↶로 되돌릴 수 있어요)')) { d.undo.push({ clear: d.s }); d.s = []; padSurf(pad).changed(); } break;
     case 'more': d.h += INK_LINE * 5; drawInk(pad); inkSave(pad.dataset.ink); break;
     case 'done': inkDone(pad); break;
   }
 });
 /* 그린 뒤 화면 다시 그리기 */
-function hydrateAns() { growAll(); requestAnimationFrame(() => $$('#reader .ink:not([hidden])').forEach(drawInk)); }
+function hydrateAns() { growAll(); requestAnimationFrame(() => { $$('#reader .ink:not([hidden])').forEach(p => drawInk(p)); applyMinkMode(); }); }
 function refreshAns() {
   $$('#reader textarea.ans').forEach(ta => { if (document.activeElement !== ta) { const a = Store.answers()[ta.dataset.for]; ta.value = a ? (a.t || '') : ''; } });
   $$('#reader .ink').forEach(pad => {
@@ -489,7 +1682,7 @@ function refreshAns() {
     const has = !!(Store.answers()[id] || {}).ink; pad.hidden = !has;
     const b = $(`[data-ink-open="${id}"]`); if (b) b.setAttribute('aria-pressed', has ? 'true' : 'false');
   });
-  hydrateAns();
+  minkReload(); hydrateAns();
 }
 let ansResizeT; addEventListener('resize', () => { clearTimeout(ansResizeT); ansResizeT = setTimeout(hydrateAns, 200); });
 
@@ -580,7 +1773,7 @@ function drawEnd() {
   const r = segmentsFromSelection(); if (!r) { getSelection().removeAllRanges(); return; }
   selSegs = r.segs; addMark(penColor);
 }
-const skipTarget = t => t.closest('textarea, input, button, a, mark.hl, .unit-extra, .vref, .ans-box');
+const skipTarget = t => t.closest('textarea, input, button, a, mark.hl, .unit-extra, .vref, .ans-box, .mink-layer');
 const reader = $('#reader');
 if (IOS) {
   reader.addEventListener('touchstart', e => {
@@ -789,7 +1982,7 @@ function renderStickies() {
     return (f.note || (f.photos || []).length) && ms.length ? { f, last: ms[ms.length - 1] } : null; }).filter(Boolean);
   if (!list.length) return;
   const wrap = $('.page-wrap', r); if (!wrap) return;
-  const side = mode === 'auto' && !isMob() && r.clientWidth >= 860 && !r.classList.contains('tr-side');
+  const side = mode === 'auto' && !isMob() && r.clientWidth >= 860 && !r.classList.contains('tr-side') && !r.classList.contains('mink');
   if (side) {
     r.classList.add('sticky-side');
     const layer = document.createElement('div'); layer.className = 'sticky-layer'; layer.setAttribute('aria-label', '메모 포스트잇');
@@ -850,6 +2043,7 @@ function renderNotes() {
   const groups = {}; Store.marks().forEach(m => { (groups[m.gid] = groups[m.gid] || []).push(m); });
   const items = Object.values(groups).map(g => ({ kind: 'mark', lid: g[0].lid, block: g[0].block, c: g[0].c, tl: g[0].tl, quote: g.map(x => x.quote).join(' … '), note: g[0].note, ph: (g[0].photos || []).length, at: g[0].at }));
   Object.entries(Store.answers()).forEach(([id, a]) => items.push({ kind: 'ans', lid: id.slice(0, 3), block: id, note: a.t || '', ink: !!a.ink, at: a.at }));
+  Object.entries(Store.minks()).forEach(([uid, v]) => { const d = v && v.ink ? parseInk(v.ink) : null; if (!d || !d.s.length) return; const fb = d.s.find(s => s.b && !/^[HA]:/.test(s.b)); items.push({ kind: 'mink', lid: uid.slice(0, 3), uid, block: fb ? fb.b : uid, n: d.s.length, at: v.at }); });
   const byL = {}; items.forEach(i => (byL[i.lid] = byL[i.lid] || []).push(i));
   const order = st.index.lessons.map(l => l.id).filter(id => byL[id]);
   const n = $('#notes');
@@ -858,7 +2052,9 @@ function renderNotes() {
   n.innerHTML = `<div class="st-mode"><span>메모 포스트잇</span><div class="seg">${[['auto', '자동'], ['below', '문단 아래'], ['off', '숨기기']].map(([k, t]) => `<button type="button" data-sticky="${k}" class="${sm === k ? 'on' : ''}">${t}</button>`).join('')}</div></div><div class="nlist">${order.map(lid => {
     const L = st.index.lessons.find(l => l.id === lid);
     const list = byL[lid].sort((a, b) => a.block < b.block ? -1 : a.block > b.block ? 1 : a.at - b.at);
-    return `<div class="ngroup">${lessonNo(L) ? L.no + '과 ' : ''}${esc(L.title)} · ${list.length}</div>` + list.map(i => i.kind === 'ans'
+    return `<div class="ngroup">${lessonNo(L) ? L.no + '과 ' : ''}${esc(L.title)} · ${list.length}</div>` + list.map(i => i.kind === 'mink'
+      ? `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}"><span class="kind">✍ 여백 필기</span> ${esc(((st.lessons[lid] && st.lessons[lid].body || []).find(u => u.id === i.uid) || { title: '표지' }).title)} · ${i.n}획</button>`
+      : i.kind === 'ans'
       ? `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}"><span class="kind">내 답</span>${i.ink ? ' <span class="kind">✍ 손글씨</span>' : ''}<br><span class="ans-font">${esc(i.note.slice(0, 120))}</span></button>`
       : `<button type="button" class="note" data-jump="${i.block}" data-lid="${lid}">${i.tl && TRL[i.tl] ? `<span class="kind tlk tl-${i.tl}">${TRL[i.tl].tag}</span> ` : ''}<q class="${markCls(i.c)}" dir="auto">${esc(i.quote.length > 70 ? i.quote.slice(0, 70) + '…' : i.quote)}</q>${i.note ? esc(i.note) : ''}${i.ph ? ` <span class="kind">📷 ${i.ph}</span>` : ''}</button>`).join('');
   }).join('')}</div>`;
@@ -1037,6 +2233,14 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideBar();
 
 /* 글자 크기 */
 const FS = [15, 16, 17, 18, 20, 22];
+/* 본문 정렬: 책처럼(양쪽 정렬 + 글자 단위 줄바꿈, 기본) → 양쪽 정렬(단어 유지) → 왼쪽 정렬 */
+const ALIGNS = [['book', '책처럼 양쪽 정렬 (간격 고르게)'], ['justify', '양쪽 정렬 (단어 안 끊김)'], ['left', '왼쪽 정렬']];
+function applyAlign() {
+  const a = Store.pref('align', 'book'); const i = Math.max(0, ALIGNS.findIndex(x => x[0] === a));
+  document.body.classList.remove('al-left', 'al-book', 'al-word'); document.body.classList.add({ book: 'al-book', justify: 'al-word', left: 'al-left' }[ALIGNS[i][0]]);
+  $('#fs-al').setAttribute('aria-pressed', a === 'left' ? 'false' : 'true'); $('#fs-al').title = '지금: ' + ALIGNS[i][1] + ' · 누르면 바뀜';
+}
+$('#fs-al').addEventListener('click', () => { const a = Store.pref('align', 'book'); const n = ALIGNS[(Math.max(0, ALIGNS.findIndex(x => x[0] === a)) + 1) % ALIGNS.length]; Store.setPref('align', n[0]); applyAlign(); toast(n[1]); });
 function setFs(v) { document.documentElement.style.setProperty('--fs', v + 'px'); Store.setPref('fs', v); growAll(); }
 $('#fs-up').addEventListener('click', () => { const i = FS.indexOf(Store.pref('fs', 17)); setFs(FS[Math.min(FS.length - 1, i + 1)]); });
 $('#fs-dn').addEventListener('click', () => { const i = FS.indexOf(Store.pref('fs', 17)); setFs(FS[Math.max(0, i - 1)]); });
@@ -1698,7 +2902,7 @@ async function applyTr() {
   const langs = trActive(); const lid = st.lid;
   const data = await Promise.all(langs.map(l => trLoad(lid, l)));
   if (my !== trSeq || lid !== st.lid) return;
-  const pick = Store.pref('trMode', 'auto');
+  const pick0 = Store.pref('trMode', 'auto'); const pick = r.classList.contains('mink') && pick0 !== 'sent' ? 'para' : pick0;   // 여백 필기 중엔 번역을 문단 아래로
   const mode = pick === 'auto' ? (r.clientWidth >= 560 + 220 * langs.length ? 'side' : 'para') : pick;
   const admin = isAdmin() && B.kind === 'firebase';
   const items = [...$$('#reader .blk[data-id]'), ...$$('#reader .hero [data-trid]')];
@@ -1982,7 +3186,7 @@ async function enterApp(info) {
   gate('loading');
   await Store.load();
   B.watchUser(onLive);
-  setFs(Store.pref('fs', 17)); setPenColor(Store.pref('pen', 'y')); applyAFont();
+  setFs(Store.pref('fs', 17)); setPenColor(Store.pref('pen', 'y')); applyAFont(); applyAlign();
   $('#acct-name').textContent = info.name + (info.role === 'admin' ? ' · 관리자' : info.role === 'teacher' ? ' · 강사' : '');
   $('#btn-admin').hidden = !(info.role === 'admin' && B.kind === 'firebase');
   $('#btn-people').hidden = info.role !== 'admin';
